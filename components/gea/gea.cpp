@@ -249,8 +249,10 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
       if (byte == GEA_STX) {
         rx_buf_.clear();
         rx_state_ = RxState::IN_PACKET;
+        ESP_LOGV(TAG, "RX: STX — frame started");
+      } else if (byte != GEA_ACK) {
+        ESP_LOGV(TAG, "RX: unexpected byte 0x%02X while idle", byte);
       }
-      // Ignore standalone ACKs and noise.
       break;
 
     case RxState::IN_PACKET:
@@ -290,9 +292,13 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
   }
 
   uint8_t dest = pkt[0];
+  uint8_t src  = pkt[2];
+
+  ESP_LOGV(TAG, "RX frame: dest=0x%02X src=0x%02X len=%zu", dest, src, pkt.size());
 
   // Filter packets not addressed to us (or broadcast).
   if (dest != src_addr_ && dest != GEA_BROADCAST_ADDR) {
+    ESP_LOGD(TAG, "Ignoring packet for 0x%02X (we are 0x%02X)", dest, src_addr_);
     return;
   }
 
@@ -302,16 +308,18 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
   uint16_t calc_crc = crc16_(pkt.data(), crc_offset);
 
   if (rx_crc != calc_crc) {
-    ESP_LOGW(TAG, "CRC mismatch: got 0x%04X, expected 0x%04X", rx_crc, calc_crc);
+    ESP_LOGW(TAG, "CRC mismatch from 0x%02X: got 0x%04X, expected 0x%04X (packet len=%zu)",
+             src, rx_crc, calc_crc, pkt.size());
     return;
   }
+
+  ESP_LOGD(TAG, "Valid packet: src=0x%02X cmd=0x%02X len=%zu", src, pkt.size() >= 4 ? pkt[3] : 0, pkt.size());
 
   // Packet is valid — acknowledge it and record receive time (used by is_bus_connected()).
   send_ack_();
   last_rx_ms_ = millis();
 
   // Auto-detect: lock onto the source address of the first valid packet.
-  uint8_t src = pkt[2];
   if (auto_detect_ && src != GEA_BROADCAST_ADDR && src != src_addr_) {
     dest_addr_ = src;
     auto_detect_ = false;
