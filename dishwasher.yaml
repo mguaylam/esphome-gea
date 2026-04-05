@@ -2,7 +2,7 @@
 # Hardware: Seeed XIAO ESP32-C3 on the FirstBuild carrier board (RJ45 breakout)
 # Framework: ESP-IDF (recommended for better Wi-Fi modes and future support)
 # Baud rate: 230400 (GEA3) — 19200 is GEA2 only
-# TX = GPIO21 (D7), RX = GPIO20 (D6) — adjust to your wiring
+# TX = GPIO20 (D6), RX = GPIO21 (D7) — matches original home-assistant-adapter firmware
 
 esphome:
   name: ge-dishwasher
@@ -74,8 +74,8 @@ interval:
 # ---------------------------------------------------------------------------
 uart:
   id: uart_gea
-  tx_pin: GPIO21
-  rx_pin: GPIO20
+  tx_pin: GPIO20   # D6
+  rx_pin: GPIO21   # D7
   baud_rate: 230400
   data_bits: 8
   stop_bits: 1
