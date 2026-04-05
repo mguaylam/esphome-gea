@@ -1,0 +1,418 @@
+#include "gea.h"
+#include "esphome/core/log.h"
+#include "esphome/core/hal.h"
+
+namespace esphome {
+namespace gea {
+
+static const char *const TAG = "gea";
+
+// =============================================================================
+// GEAEntity helpers
+// =============================================================================
+
+float GEAEntity::decode_as_float(const std::vector<uint8_t> &data) const {
+  if (data.size() <= (size_t) byte_offset_)
+    return 0.0f;
+  const uint8_t *d = data.data() + byte_offset_;
+  size_t rem = data.size() - byte_offset_;
+
+  switch (decode_) {
+    case GeaDecodeType::UINT8:
+      return (rem >= 1) ? (float) d[0] : 0.0f;
+
+    case GeaDecodeType::UINT16_BE:
+      return (rem >= 2) ? (float) ((uint16_t) d[0] << 8 | d[1]) : 0.0f;
+
+    case GeaDecodeType::UINT16_LE:
+      return (rem >= 2) ? (float) ((uint16_t) d[1] << 8 | d[0]) : 0.0f;
+
+    case GeaDecodeType::UINT32_BE:
+      return (rem >= 4)
+          ? (float) ((uint32_t) d[0] << 24 | (uint32_t) d[1] << 16 | (uint32_t) d[2] << 8 | d[3])
+          : 0.0f;
+
+    case GeaDecodeType::UINT32_LE:
+      return (rem >= 4)
+          ? (float) ((uint32_t) d[3] << 24 | (uint32_t) d[2] << 16 | (uint32_t) d[1] << 8 | d[0])
+          : 0.0f;
+
+    case GeaDecodeType::INT8:
+      return (rem >= 1) ? (float) (int8_t) d[0] : 0.0f;
+
+    case GeaDecodeType::INT16_BE:
+      return (rem >= 2) ? (float) (int16_t) ((uint16_t) d[0] << 8 | d[1]) : 0.0f;
+
+    case GeaDecodeType::INT16_LE:
+      return (rem >= 2) ? (float) (int16_t) ((uint16_t) d[1] << 8 | d[0]) : 0.0f;
+
+    case GeaDecodeType::INT32_BE:
+      return (rem >= 4)
+          ? (float) (int32_t) ((uint32_t) d[0] << 24 | (uint32_t) d[1] << 16 | (uint32_t) d[2] << 8 | d[3])
+          : 0.0f;
+
+    case GeaDecodeType::INT32_LE:
+      return (rem >= 4)
+          ? (float) (int32_t) ((uint32_t) d[3] << 24 | (uint32_t) d[2] << 16 | (uint32_t) d[1] << 8 | d[0])
+          : 0.0f;
+
+    case GeaDecodeType::BOOL:
+      return (rem >= 1) ? ((d[0] & bitmask_) ? 1.0f : 0.0f) : 0.0f;
+
+    default:
+      return 0.0f;
+  }
+}
+
+std::string GEAEntity::decode_as_hex(const std::vector<uint8_t> &data) const {
+  if (data.empty())
+    return "0x";
+  std::string result = "0x";
+  char hex[3];
+  for (uint8_t b : data) {
+    snprintf(hex, sizeof(hex), "%02X", b);
+    result += hex;
+  }
+  return result;
+}
+
+// =============================================================================
+// GEAComponent — protocol utilities
+// =============================================================================
+
+// CRC-16/CCITT: polynomial 0x1021, seed 0x1021
+// Covers [DEST][LEN][SRC][PAYLOAD...] (everything between STX and CRC bytes).
+uint16_t GEAComponent::crc16_(const uint8_t *data, size_t len) {
+  uint16_t crc = GEA_CRC_SEED;
+  for (size_t i = 0; i < len; i++) {
+    crc ^= (uint16_t) data[i] << 8;
+    for (int j = 0; j < 8; j++) {
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
+    }
+  }
+  return crc;
+}
+
+// Escape control bytes {0xE0, 0xE1, 0xE2, 0xE3}: prefix with GEA_ESC (0xE0),
+// then XOR the original byte with 0x80.
+//   0xE0 → 0xE0 0x60
+//   0xE1 → 0xE0 0x61
+//   0xE2 → 0xE0 0x62
+//   0xE3 → 0xE0 0x63
+std::vector<uint8_t> GEAComponent::escape_(const std::vector<uint8_t> &raw) {
+  std::vector<uint8_t> out;
+  out.reserve(raw.size() + 4);
+  for (uint8_t b : raw) {
+    if (b >= 0xE0 && b <= 0xE3) {
+      out.push_back(GEA_ESC);
+      out.push_back(b ^ 0x80);
+    } else {
+      out.push_back(b);
+    }
+  }
+  return out;
+}
+
+// =============================================================================
+// GEAComponent — TX helpers
+// =============================================================================
+
+// Build and transmit a framed GEA3 packet.
+//
+// Wire format (pre-escape):
+//   [STX=0xE2] [DEST] [LEN] [SRC] [payload...] [CRC_LO] [CRC_HI] [ETX=0xE3]
+//
+// LEN = total logical packet length (1+1+1+1+payload+2+1 = 7+payload).
+// CRC is computed over [DEST][LEN][SRC][payload...] before escaping.
+// Everything between STX and ETX is then escape-processed.
+void GEAComponent::send_packet_(uint8_t dest, const std::vector<uint8_t> &payload) {
+  uint8_t len = (uint8_t) (7 + payload.size());
+
+  // Build the inner portion (subject to CRC and escaping)
+  std::vector<uint8_t> inner;
+  inner.reserve(4 + payload.size() + 2);
+  inner.push_back(dest);
+  inner.push_back(len);
+  inner.push_back(src_addr_);
+  inner.insert(inner.end(), payload.begin(), payload.end());
+
+  uint16_t crc = crc16_(inner.data(), inner.size());
+  inner.push_back(crc & 0xFF);   // CRC_LO (LSB first)
+  inner.push_back(crc >> 8);     // CRC_HI
+
+  auto escaped = escape_(inner);
+
+  write_byte(GEA_STX);
+  write_array(escaped.data(), escaped.size());
+  write_byte(GEA_ETX);
+
+  req_id_++;
+  if (req_id_ == 0)
+    req_id_ = 1;  // keep non-zero
+}
+
+// Send a bare ACK byte (no framing — GEA3 ACK is a single 0xE1 on the wire).
+void GEAComponent::send_ack_() { write_byte(GEA_ACK); }
+
+// Send a bare publication ACK (same as regular ACK for simplicity; the spec
+// defines CMD_PUB_ACK 0xA7 as a framed packet, but many implementations omit it).
+void GEAComponent::send_pub_ack_() { write_byte(GEA_ACK); }
+
+// Trigger ERD discovery: the appliance responds with a publication (0xA6) for
+// every ERD it supports.  We log each one and also route values to any
+// user-configured entities that match.
+void GEAComponent::send_subscribe_all_() {
+  std::vector<uint8_t> payload = {CMD_SUB_ALL_REQUEST, req_id_};
+  send_packet_(dest_addr_, payload);
+  ESP_LOGD(TAG, "Sent subscribe-all request (discovery)");
+}
+
+// =============================================================================
+// GEAComponent — ESPHome lifecycle
+// =============================================================================
+
+void GEAComponent::setup() {
+  ESP_LOGCONFIG(TAG, "Setting up GEA3 component...");
+  rx_buf_.reserve(64);
+  if (auto_detect_) {
+    ESP_LOGI(TAG, "Address auto-detect enabled — sending subscribe-all to broadcast");
+    dest_addr_ = GEA_BROADCAST_ADDR;
+  }
+  send_subscribe_all_();
+  last_subscribe_ms_ = millis();
+}
+
+void GEAComponent::dump_config() {
+  ESP_LOGCONFIG(TAG, "GEA3 Component:");
+  if (auto_detect_) {
+    ESP_LOGCONFIG(TAG, "  Dest address: auto-detect (current: 0x%02X)", dest_addr_);
+  } else {
+    ESP_LOGCONFIG(TAG, "  Dest address: 0x%02X", dest_addr_);
+  }
+  ESP_LOGCONFIG(TAG, "  Src address:  0x%02X", src_addr_);
+  ESP_LOGCONFIG(TAG, "  Resubscribe interval: %u ms", resubscribe_interval_);
+  ESP_LOGCONFIG(TAG, "  Registered entities: %zu", entities_.size());
+  for (auto *e : entities_) {
+    ESP_LOGCONFIG(TAG, "    ERD 0x%04X", e->get_erd());
+  }
+}
+
+void GEAComponent::loop() {
+  // Drain all available RX bytes through the state machine.
+  uint8_t byte;
+  while (available()) {
+    if (!read_byte(&byte))
+      break;
+    process_rx_byte_(byte);
+  }
+
+  // Periodic re-subscribe: keeps entity state live if the appliance power-cycles.
+  uint32_t now = millis();
+  if (now - last_subscribe_ms_ >= resubscribe_interval_) {
+    last_subscribe_ms_ = now;
+    send_subscribe_all_();
+  }
+}
+
+// =============================================================================
+// GEAComponent — entity registry & write
+// =============================================================================
+
+void GEAComponent::register_entity(GEAEntity *entity) {
+  entity->set_parent(this);
+  entities_.push_back(entity);
+}
+
+void GEAComponent::write_erd(uint16_t erd, const std::vector<uint8_t> &data) {
+  std::vector<uint8_t> payload;
+  payload.reserve(4 + data.size());
+  payload.push_back(CMD_WRITE_REQUEST);
+  payload.push_back(req_id_);
+  payload.push_back((uint8_t) (erd >> 8));
+  payload.push_back((uint8_t) (erd & 0xFF));
+  payload.push_back((uint8_t) data.size());
+  payload.insert(payload.end(), data.begin(), data.end());
+  send_packet_(dest_addr_, payload);
+  ESP_LOGD(TAG, "Write ERD 0x%04X (%zu bytes)", erd, data.size());
+}
+
+// =============================================================================
+// GEAComponent — RX state machine
+// =============================================================================
+
+// Byte-by-byte processing.  rx_buf_ accumulates the unescaped inner frame:
+//   [DEST][LEN][SRC][PAYLOAD...][CRC_LO][CRC_HI]
+// (STX and ETX are not stored.)
+void GEAComponent::process_rx_byte_(uint8_t byte) {
+  switch (rx_state_) {
+    case RxState::IDLE:
+      if (byte == GEA_STX) {
+        rx_buf_.clear();
+        rx_state_ = RxState::IN_PACKET;
+      }
+      // Ignore standalone ACKs and noise.
+      break;
+
+    case RxState::IN_PACKET:
+      if (byte == GEA_STX) {
+        // Unexpected re-sync: restart frame.
+        rx_buf_.clear();
+      } else if (byte == GEA_ESC) {
+        rx_state_ = RxState::ESCAPE;
+      } else if (byte == GEA_ETX) {
+        // End of frame — validate and dispatch.
+        process_packet_(rx_buf_);
+        rx_state_ = RxState::IDLE;
+        rx_buf_.clear();
+      } else {
+        rx_buf_.push_back(byte);
+      }
+      break;
+
+    case RxState::ESCAPE:
+      // Unescape: reverse of (original ^ 0x80).
+      rx_buf_.push_back(byte ^ 0x80);
+      rx_state_ = RxState::IN_PACKET;
+      break;
+  }
+}
+
+// =============================================================================
+// GEAComponent — packet validation and dispatch
+// =============================================================================
+
+// pkt = [DEST][LEN][SRC][PAYLOAD...][CRC_LO][CRC_HI]  (already unescaped)
+void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
+  // Minimum viable packet: DEST + LEN + SRC + CMD + CRC_LO + CRC_HI = 6 bytes.
+  if (pkt.size() < 6) {
+    ESP_LOGV(TAG, "Short packet (%zu bytes), discarding", pkt.size());
+    return;
+  }
+
+  uint8_t dest = pkt[0];
+
+  // Filter packets not addressed to us (or broadcast).
+  if (dest != src_addr_ && dest != GEA_BROADCAST_ADDR) {
+    return;
+  }
+
+  // Validate CRC: computed over everything except the last 2 (CRC) bytes.
+  size_t crc_offset = pkt.size() - 2;
+  uint16_t rx_crc = (uint16_t) pkt[crc_offset] | ((uint16_t) pkt[crc_offset + 1] << 8);
+  uint16_t calc_crc = crc16_(pkt.data(), crc_offset);
+
+  if (rx_crc != calc_crc) {
+    ESP_LOGW(TAG, "CRC mismatch: got 0x%04X, expected 0x%04X", rx_crc, calc_crc);
+    return;
+  }
+
+  // Packet is valid — acknowledge it.
+  send_ack_();
+
+  // Auto-detect: lock onto the source address of the first valid packet.
+  uint8_t src = pkt[2];
+  if (auto_detect_ && src != GEA_BROADCAST_ADDR && src != src_addr_) {
+    dest_addr_ = src;
+    auto_detect_ = false;
+    ESP_LOGI(TAG, "Auto-detected appliance address: 0x%02X", dest_addr_);
+  }
+
+  // pkt[2] = SRC (appliance address), pkt[3] = first payload byte = command.
+  if (pkt.size() < 4)
+    return;
+  uint8_t cmd = pkt[3];
+
+  switch (cmd) {
+    case CMD_READ_RESPONSE: {
+      // [CMD][req_id][result][ERD_H][ERD_L][size][data...]
+      // Offsets into pkt (after DEST/LEN/SRC): 3=CMD, 4=req_id, 5=result,
+      //                                          6=ERD_H, 7=ERD_L, 8=size, 9..
+      if (pkt.size() < 9)
+        break;
+      uint8_t result = pkt[5];
+      if (result != 0x00) {
+        uint16_t erd = (uint16_t) pkt[6] << 8 | pkt[7];
+        ESP_LOGW(TAG, "Read ERD 0x%04X failed, result=0x%02X", erd, result);
+        break;
+      }
+      uint16_t erd = (uint16_t) pkt[6] << 8 | pkt[7];
+      uint8_t size = pkt[8];
+      if (pkt.size() < (size_t) (9 + size))
+        break;
+      std::vector<uint8_t> data(pkt.begin() + 9, pkt.begin() + 9 + size);
+      dispatch_erd_(erd, data);
+      break;
+    }
+
+    case CMD_WRITE_RESPONSE: {
+      // [CMD][req_id][result][ERD_H][ERD_L]
+      if (pkt.size() < 8)
+        break;
+      uint8_t result = pkt[5];
+      uint16_t erd = (uint16_t) pkt[6] << 8 | pkt[7];
+      if (result != 0x00) {
+        ESP_LOGW(TAG, "Write ERD 0x%04X failed, result=0x%02X", erd, result);
+      } else {
+        ESP_LOGD(TAG, "Write ERD 0x%04X OK", erd);
+      }
+      break;
+    }
+
+    case CMD_SUB_ALL_RESPONSE: {
+      // [CMD][req_id][result]
+      if (pkt.size() < 6)
+        break;
+      uint8_t result = pkt[5];
+      if (result == 0x00) {
+        ESP_LOGD(TAG, "Subscribe-all accepted; waiting for publications...");
+      } else {
+        ESP_LOGW(TAG, "Subscribe-all rejected, result=0x%02X", result);
+      }
+      break;
+    }
+
+    case CMD_PUBLICATION: {
+      // [CMD][0][ERD_H][ERD_L][size][data...]
+      // Offsets: 3=CMD, 4=0 (padding), 5=ERD_H, 6=ERD_L, 7=size, 8..
+      if (pkt.size() < 8)
+        break;
+      uint16_t erd = (uint16_t) pkt[5] << 8 | pkt[6];
+      uint8_t size = pkt[7];
+      if (pkt.size() < (size_t) (8 + size))
+        break;
+      std::vector<uint8_t> data(pkt.begin() + 8, pkt.begin() + 8 + size);
+      log_discovery_(erd, data);
+      dispatch_erd_(erd, data);
+      send_pub_ack_();
+      break;
+    }
+
+    default:
+      ESP_LOGV(TAG, "Unknown command 0x%02X, ignoring", cmd);
+      break;
+  }
+}
+
+// Route ERD data to all registered entities with a matching ERD address.
+void GEAComponent::dispatch_erd_(uint16_t erd, const std::vector<uint8_t> &data) {
+  for (auto *entity : entities_) {
+    if (entity->get_erd() == erd) {
+      entity->on_erd_data(data);
+    }
+  }
+}
+
+// Log a discovered ERD (called for every publication received during discovery).
+void GEAComponent::log_discovery_(uint16_t erd, const std::vector<uint8_t> &data) {
+  // Build hex string of the raw value
+  std::string hex = "0x";
+  char buf[3];
+  for (uint8_t b : data) {
+    snprintf(buf, sizeof(buf), "%02X", b);
+    hex += buf;
+  }
+  ESP_LOGI(TAG, "Discovered ERD 0x%04X (%zu bytes): %s", erd, data.size(), hex.c_str());
+}
+
+}  // namespace gea
+}  // namespace esphome

@@ -1,0 +1,137 @@
+# ESPHome config for a GE dishwasher via GEA3 protocol
+# Hardware: Seeed XIAO ESP32-C3 on the FirstBuild carrier board (RJ45 breakout)
+# Framework: ESP-IDF (recommended for better Wi-Fi modes and future support)
+# Baud rate: 230400 (GEA3) — 19200 is GEA2 only
+# TX = GPIO21 (D7), RX = GPIO20 (D6) — adjust to your wiring
+
+esphome:
+  name: ge-dishwasher
+  friendly_name: GE Dishwasher
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [gea]
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "ge-dishwasher fallback"
+    password: !secret ap_password
+
+# ---------------------------------------------------------------------------
+# UART — GEA3 full-duplex, 230400 baud
+# ---------------------------------------------------------------------------
+uart:
+  id: uart_gea
+  tx_pin: GPIO21
+  rx_pin: GPIO20
+  baud_rate: 230400
+  data_bits: 8
+  stop_bits: 1
+  parity: NONE
+  rx_buffer_size: 512
+
+# ---------------------------------------------------------------------------
+# GEA3 hub
+# ---------------------------------------------------------------------------
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  # dest_address omitted — auto-detected from the first valid packet on the bus.
+  # Set explicitly (e.g. dest_address: 0x24) to skip auto-detect.
+  src_address: 0xBB
+  resubscribe_interval: 60s  # re-send subscribe_all if appliance power-cycles
+
+# ---------------------------------------------------------------------------
+# Sensors
+# ---------------------------------------------------------------------------
+sensor:
+  # Cycle time remaining (minutes)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycle Time Remaining"
+    erd: 0x0300
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    decode: uint16_be
+
+  # Number of cycles completed (lifetime counter)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycle Count"
+    erd: 0xC410
+    unit_of_measurement: ""
+    accuracy_decimals: 0
+    decode: uint32_be
+
+# ---------------------------------------------------------------------------
+# Binary sensors
+# ---------------------------------------------------------------------------
+binary_sensor:
+  # Door open/closed — bit 0 of ERD 0x0027
+  - platform: gea
+    gea_id: gea_hub
+    name: "Door Open"
+    erd: 0x0027
+    bitmask: 0x01
+
+  # Rinse aid low — bit 1 of ERD 0x0027 (example)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Rinse Aid Low"
+    erd: 0x0027
+    bitmask: 0x02
+    byte_offset: 0
+
+# ---------------------------------------------------------------------------
+# Select (writable ERDs)
+# ---------------------------------------------------------------------------
+select:
+  # Wash cycle selection
+  - platform: gea
+    gea_id: gea_hub
+    name: "Wash Cycle"
+    erd: 0x0045
+    decode: uint8
+    options:
+      0x00: "No Cycle"
+      0x01: "Autosense"
+      0x02: "Heavy"
+      0x04: "Normal"
+      0x08: "Light"
+      0x0B: "Rinse Only"
+
+# ---------------------------------------------------------------------------
+# Text sensors (raw hex — useful for debugging unknown ERDs)
+# ---------------------------------------------------------------------------
+text_sensor:
+  # Cycle state byte — raw hex for easy manual inspection
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycle State Raw"
+    erd: 0x0027
+
+  # Appliance model number (ASCII-encoded ERD)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Model Number Raw"
+    erd: 0x0001
