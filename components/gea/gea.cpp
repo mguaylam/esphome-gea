@@ -203,7 +203,17 @@ void GEAComponent::loop() {
   while (available()) {
     if (!read_byte(&byte))
       break;
+    rx_byte_count_++;
     process_rx_byte_(byte);
+  }
+
+  // Log RX stats every 10 s so we can confirm the UART is receiving at all.
+  uint32_t now_stats = millis();
+  if (now_stats - last_stats_ms_ >= 10000) {
+    last_stats_ms_ = now_stats;
+    ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s",
+             rx_byte_count_,
+             is_bus_connected() ? "CONNECTED" : "no valid packets yet");
   }
 
   // Periodic re-subscribe: keeps entity state live if the appliance power-cycles.
@@ -249,7 +259,7 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
       if (byte == GEA_STX) {
         rx_buf_.clear();
         rx_state_ = RxState::IN_PACKET;
-        ESP_LOGV(TAG, "RX: STX — frame started");
+        ESP_LOGD(TAG, "RX: STX — frame started");
       } else if (byte != GEA_ACK) {
         ESP_LOGV(TAG, "RX: unexpected byte 0x%02X while idle", byte);
       }

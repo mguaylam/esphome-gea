@@ -154,6 +154,10 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // Timestamp of the last successfully received packet (ms since boot, 0 = none).
   uint32_t last_rx_ms_{0};
+
+  // Raw byte counter — reported periodically so we can confirm UART is alive.
+  uint32_t rx_byte_count_{0};
+  uint32_t last_stats_ms_{0};
 };
 
 }  // namespace gea
