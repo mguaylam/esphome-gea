@@ -36,6 +36,38 @@ wifi:
   ap:
     ssid: "ge-dishwasher fallback"
     password: !secret ap_password
+  on_connect:
+    - output.turn_on: led_wifi
+  on_disconnect:
+    - output.turn_off: led_wifi
+
+# ---------------------------------------------------------------------------
+# Status LEDs — matches the original GE home-assistant-adapter carrier board
+#   D0 (GPIO2): system heartbeat  — blinks while connecting, solid when fully OK
+#   D1 (GPIO3): Wi-Fi connected   — solid on
+#   D2 (GPIO4): GEA bus connected — solid when appliance is responding
+# ---------------------------------------------------------------------------
+status_led:
+  pin: GPIO2   # D0 — handled entirely by ESPHome (fast blink=error, slow=degraded, off=OK)
+
+output:
+  - platform: gpio
+    pin: GPIO3
+    id: led_wifi
+  - platform: gpio
+    pin: GPIO4
+    id: led_gea
+
+interval:
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: return id(gea_hub).is_bus_connected();
+          then:
+            - output.turn_on: led_gea
+          else:
+            - output.turn_off: led_gea
 
 # ---------------------------------------------------------------------------
 # UART — GEA3 full-duplex, 230400 baud

@@ -108,6 +108,12 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // ---- Called by writable entities (select, number, etc.) -----------------
   void write_erd(uint16_t erd, const std::vector<uint8_t> &data);
 
+  // ---- Status — usable in YAML lambdas (e.g. for a GEA-connected LED) -----
+  // Returns true if a valid packet has been received within the last 30 s.
+  bool is_bus_connected() const {
+    return last_rx_ms_ != 0 && (millis() - last_rx_ms_) < 30000;
+  }
+
  protected:
   // TX helpers
   void send_packet_(uint8_t dest, const std::vector<uint8_t> &payload);
@@ -145,6 +151,9 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // Rolling request ID (incremented on every sent request)
   uint8_t req_id_{1};
+
+  // Timestamp of the last successfully received packet (ms since boot, 0 = none).
+  uint32_t last_rx_ms_{0};
 };
 
 }  // namespace gea

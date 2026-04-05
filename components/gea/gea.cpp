@@ -306,8 +306,9 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
     return;
   }
 
-  // Packet is valid — acknowledge it.
+  // Packet is valid — acknowledge it and record receive time (used by is_bus_connected()).
   send_ack_();
+  last_rx_ms_ = millis();
 
   // Auto-detect: lock onto the source address of the first valid packet.
   uint8_t src = pkt[2];
