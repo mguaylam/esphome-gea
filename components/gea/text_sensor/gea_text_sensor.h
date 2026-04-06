@@ -13,7 +13,13 @@ class GEATextSensor : public text_sensor::TextSensor, public GEAEntity, public C
     if (data.empty())
       return;
 
-    if (decode_ == GeaDecodeType::RAW) {
+    if (decode_ == GeaDecodeType::ASCII) {
+      // Trim trailing nulls and publish as a string
+      size_t len = data.size();
+      while (len > 0 && data[len - 1] == 0x00)
+        len--;
+      publish_state(std::string(data.begin(), data.begin() + len));
+    } else if (decode_ == GeaDecodeType::RAW) {
       // Publish as hex string, e.g. "0x0100"
       publish_state(decode_as_hex(data));
     } else {

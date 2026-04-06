@@ -94,76 +94,114 @@ gea:
   resubscribe_interval: 60s  # re-send subscribe_all if appliance power-cycles
 
 # ---------------------------------------------------------------------------
-# Sensors
+# Sensors — ERDs discovered from PDP715SYV0FS dishwasher
 # ---------------------------------------------------------------------------
 sensor:
-  # Cycle time remaining (minutes)
+  # Elapsed time counter (seconds, increments at 1 Hz while running)
   - platform: gea
     gea_id: gea_hub
-    name: "Cycle Time Remaining"
-    erd: 0x0300
-    unit_of_measurement: min
+    name: "Elapsed Time"
+    erd: 0x0702
+    unit_of_measurement: s
+    accuracy_decimals: 0
+    decode: uint32_be
+    icon: mdi:timer-outline
+
+  # Machine state (e.g. 0x02 = idle)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Machine State"
+    erd: 0x3001
+    accuracy_decimals: 0
+    decode: uint8
+
+  # Cycle index: 0=AutoSense, 1=Heavy, 2=Normal, 3=1Hr Wash, 4=Rinse
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycle Index"
+    erd: 0x321B
+    accuracy_decimals: 0
+    decode: uint8
+
+  # Per-cycle value (varies per cycle selection)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycle Parameter"
+    erd: 0xD004
     accuracy_decimals: 0
     decode: uint16_be
 
-  # Number of cycles completed (lifetime counter)
+  # Unknown 2-byte value (0x0009 / 0x000A observed)
   - platform: gea
     gea_id: gea_hub
-    name: "Cycle Count"
-    erd: 0xC410
-    unit_of_measurement: ""
+    name: "ERD 0x3084"
+    erd: 0x3084
     accuracy_decimals: 0
-    decode: uint32_be
+    decode: uint16_be
 
-# ---------------------------------------------------------------------------
-# Binary sensors
-# ---------------------------------------------------------------------------
-binary_sensor:
-  # Door open/closed — bit 0 of ERD 0x0027
+  # Unknown 2-byte value (0x0000 / 0x0008 / 0x0009 observed)
   - platform: gea
     gea_id: gea_hub
-    name: "Door Open"
-    erd: 0x0027
-    bitmask: 0x01
-
-  # Rinse aid low — bit 1 of ERD 0x0027 (example)
-  - platform: gea
-    gea_id: gea_hub
-    name: "Rinse Aid Low"
-    erd: 0x0027
-    bitmask: 0x02
-    byte_offset: 0
+    name: "ERD 0x3107"
+    erd: 0x3107
+    accuracy_decimals: 0
+    decode: uint16_be
 
 # ---------------------------------------------------------------------------
-# Select (writable ERDs)
-# ---------------------------------------------------------------------------
-select:
-  # Wash cycle selection
-  - platform: gea
-    gea_id: gea_hub
-    name: "Wash Cycle"
-    erd: 0x0045
-    decode: uint8
-    options:
-      0x00: "No Cycle"
-      0x01: "Autosense"
-      0x02: "Heavy"
-      0x04: "Normal"
-      0x08: "Light"
-      0x0B: "Rinse Only"
-
-# ---------------------------------------------------------------------------
-# Text sensors (raw hex — useful for debugging unknown ERDs)
+# Text sensors
 # ---------------------------------------------------------------------------
 text_sensor:
-  # Cycle state byte — raw hex for easy manual inspection
+  # Cycle name as ASCII text (e.g. "AutoSense", "Heavy", "Normal")
   - platform: gea
     gea_id: gea_hub
-    name: "Cycle State Raw"
-    erd: 0x0027
+    name: "Cycle Name"
+    erd: 0x301C
+    decode: ascii
+    icon: mdi:dishwasher
 
-  # Appliance model number (ASCII-encoded ERD)
+  # Appliance model number (ASCII)
   - platform: gea
     gea_id: gea_hub
-    name: "Model Number Raw"
+    name: "Model Number"
     erd: 0x0001
+    decode: ascii
+
+  # Cycle status — 6 bytes, raw hex for inspection
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycle Status Raw"
+    erd: 0x3000
+
+  # Cycle config — 3 bytes, raw hex for inspection
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycle Config Raw"
+    erd: 0x3007
+
+  # 8-byte ERD with toggling value
+  - platform: gea
+    gea_id: gea_hub
+    name: "ERD 0x3230 Raw"
+    erd: 0x3230
+
+  # Unknown 4-byte ERD
+  - platform: gea
+    gea_id: gea_hub
+    name: "ERD 0x322A Raw"
+    erd: 0x322A
+
+  # Unknown 6-byte ERDs
+  - platform: gea
+    gea_id: gea_hub
+    name: "ERD 0x3227 Raw"
+    erd: 0x3227
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "ERD 0x3228 Raw"
+    erd: 0x3228
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "ERD 0x3229 Raw"
+    erd: 0x3229

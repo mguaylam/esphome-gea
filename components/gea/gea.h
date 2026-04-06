@@ -50,6 +50,7 @@ enum GeaDecodeType {
   INT32_LE,
   BOOL,
   RAW,
+  ASCII,
 };
 
 class GEAComponent;

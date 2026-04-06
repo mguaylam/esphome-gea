@@ -36,6 +36,7 @@ DECODE_TYPES = {
     "int32_le":  GeaDecodeType.INT32_LE,
     "bool":      GeaDecodeType.BOOL,
     "raw":       GeaDecodeType.RAW,
+    "ascii":     GeaDecodeType.ASCII,
 }
 
 CONFIG_SCHEMA = cv.Schema(
