@@ -118,8 +118,8 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // TX helpers
   void send_packet_(uint8_t dest, const std::vector<uint8_t> &payload);
   void send_ack_();
-  void send_subscribe_all_();
-  void send_pub_ack_();
+  void send_subscribe_all_(uint8_t type = 0x00);
+  void send_pub_ack_(uint8_t context, uint8_t request_id);
 
   // RX state machine
   void process_rx_byte_(uint8_t byte);

@@ -154,17 +154,21 @@ void GEAComponent::send_packet_(uint8_t dest, const std::vector<uint8_t> &payloa
 // Send a bare ACK byte (no framing — GEA3 ACK is a single 0xE1 on the wire).
 void GEAComponent::send_ack_() { write_byte(GEA_ACK); }
 
-// Send a bare publication ACK (same as regular ACK for simplicity; the spec
-// defines CMD_PUB_ACK 0xA7 as a framed packet, but many implementations omit it).
-void GEAComponent::send_pub_ack_() { write_byte(GEA_ACK); }
+// Send a framed publication acknowledgement: [CMD_PUB_ACK][context][request_id].
+// The context and request_id must echo the values from the publication header.
+void GEAComponent::send_pub_ack_(uint8_t context, uint8_t request_id) {
+  std::vector<uint8_t> payload = {CMD_PUB_ACK, context, request_id};
+  send_packet_(dest_addr_, payload);
+}
 
 // Trigger ERD discovery: the appliance responds with a publication (0xA6) for
 // every ERD it supports.  We log each one and also route values to any
 // user-configured entities that match.
-void GEAComponent::send_subscribe_all_() {
-  std::vector<uint8_t> payload = {CMD_SUB_ALL_REQUEST, req_id_};
+void GEAComponent::send_subscribe_all_(uint8_t type) {
+  // type: 0x00 = add subscription, 0x01 = retain (keep-alive)
+  std::vector<uint8_t> payload = {CMD_SUB_ALL_REQUEST, req_id_, type};
   send_packet_(dest_addr_, payload);
-  ESP_LOGD(TAG, "Sent subscribe-all request (discovery)");
+  ESP_LOGD(TAG, "Sent subscribe-all request (type=%u)", type);
 }
 
 // =============================================================================
@@ -178,7 +182,7 @@ void GEAComponent::setup() {
     ESP_LOGI(TAG, "Address auto-detect enabled — sending subscribe-all to broadcast");
     dest_addr_ = GEA_BROADCAST_ADDR;
   }
-  send_subscribe_all_();
+  send_subscribe_all_(0x00);  // type=add
   last_subscribe_ms_ = millis();
 }
 
@@ -220,7 +224,7 @@ void GEAComponent::loop() {
   uint32_t now = millis();
   if (now - last_subscribe_ms_ >= resubscribe_interval_) {
     last_subscribe_ms_ = now;
-    send_subscribe_all_();
+    send_subscribe_all_(0x01);  // type=retain (keep-alive)
   }
 }
 
@@ -392,18 +396,28 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
     }
 
     case CMD_PUBLICATION: {
-      // [CMD][0][ERD_H][ERD_L][size][data...]
-      // Offsets: 3=CMD, 4=0 (padding), 5=ERD_H, 6=ERD_L, 7=size, 8..
-      if (pkt.size() < 8)
+      // [CMD=0xA6][context][request_id][erd_count][ERD_H][ERD_L][size][data...]...
+      // Offsets: 3=CMD, 4=context, 5=request_id, 6=erd_count, 7+=ERD entries
+      if (pkt.size() < 9)
         break;
-      uint16_t erd = (uint16_t) pkt[5] << 8 | pkt[6];
-      uint8_t size = pkt[7];
-      if (pkt.size() < (size_t) (8 + size))
-        break;
-      std::vector<uint8_t> data(pkt.begin() + 8, pkt.begin() + 8 + size);
-      log_discovery_(erd, data);
-      dispatch_erd_(erd, data);
-      send_pub_ack_();
+      uint8_t context = pkt[4];
+      uint8_t pub_req_id = pkt[5];
+      uint8_t erd_count = pkt[6];
+      size_t offset = 7;
+      for (uint8_t i = 0; i < erd_count; i++) {
+        if (offset + 3 > pkt.size() - 2)  // need ERD_H+ERD_L+size before CRC
+          break;
+        uint16_t erd = (uint16_t) pkt[offset] << 8 | pkt[offset + 1];
+        uint8_t size = pkt[offset + 2];
+        offset += 3;
+        if (offset + size > pkt.size() - 2)
+          break;
+        std::vector<uint8_t> data(pkt.begin() + offset, pkt.begin() + offset + size);
+        offset += size;
+        log_discovery_(erd, data);
+        dispatch_erd_(erd, data);
+      }
+      send_pub_ack_(context, pub_req_id);
       break;
     }
 
