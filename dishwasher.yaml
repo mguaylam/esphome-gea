@@ -1,8 +1,8 @@
 # ESPHome config for a GE dishwasher via GEA3 protocol
 # Hardware: Seeed XIAO ESP32-C3 on the FirstBuild carrier board (RJ45 breakout)
-# Framework: ESP-IDF (recommended for better Wi-Fi modes and future support)
+# Framework: Arduino (same as original geappliances/home-assistant-adapter firmware)
 # Baud rate: 230400 (GEA3) — 19200 is GEA2 only
-# TX = GPIO20 (D6), RX = GPIO21 (D7) — matches original home-assistant-adapter firmware
+# TX = GPIO21 (D6), RX = GPIO20 (D7) — confirmed from carrier board schematic (J103/J105 pin 7)
 
 esphome:
   name: ge-dishwasher
@@ -11,7 +11,7 @@ esphome:
 esp32:
   board: seeed_xiao_esp32c3
   framework:
-    type: esp-idf
+    type: arduino
 
 external_components:
   - source:
@@ -74,8 +74,8 @@ interval:
 # ---------------------------------------------------------------------------
 uart:
   id: uart_gea
-  tx_pin: GPIO20   # D6
-  rx_pin: GPIO21   # D7
+  tx_pin: GPIO21   # D6 (confirmed from carrier board schematic: J103 pin 7 → M_GEA3_TX)
+  rx_pin: GPIO20   # D7 (confirmed from carrier board schematic: J105 pin 7 → M_GEA3_RX)
   baud_rate: 230400
   data_bits: 8
   stop_bits: 1
@@ -90,7 +90,7 @@ gea:
   uart_id: uart_gea
   # dest_address omitted — auto-detected from the first valid packet on the bus.
   # Set explicitly (e.g. dest_address: 0x24) to skip auto-detect.
-  src_address: 0xBB
+  src_address: 0xE4  # matches geappliances/home-assistant-adapter default
   resubscribe_interval: 60s  # re-send subscribe_all if appliance power-cycles
 
 # ---------------------------------------------------------------------------

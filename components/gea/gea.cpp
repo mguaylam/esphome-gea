@@ -120,7 +120,7 @@ std::vector<uint8_t> GEAComponent::escape_(const std::vector<uint8_t> &raw) {
 // Build and transmit a framed GEA3 packet.
 //
 // Wire format (pre-escape):
-//   [STX=0xE2] [DEST] [LEN] [SRC] [payload...] [CRC_LO] [CRC_HI] [ETX=0xE3]
+//   [STX=0xE2] [DEST] [LEN] [SRC] [payload...] [CRC_MSB] [CRC_LSB] [ETX=0xE3]
 //
 // LEN = total logical packet length (1+1+1+1+payload+2+1 = 7+payload).
 // CRC is computed over [DEST][LEN][SRC][payload...] before escaping.
@@ -137,8 +137,8 @@ void GEAComponent::send_packet_(uint8_t dest, const std::vector<uint8_t> &payloa
   inner.insert(inner.end(), payload.begin(), payload.end());
 
   uint16_t crc = crc16_(inner.data(), inner.size());
-  inner.push_back(crc & 0xFF);   // CRC_LO (LSB first)
-  inner.push_back(crc >> 8);     // CRC_HI
+  inner.push_back(crc >> 8);     // CRC MSB (sent first, per GEA3 spec)
+  inner.push_back(crc & 0xFF);   // CRC LSB
 
   auto escaped = escape_(inner);
 
@@ -293,7 +293,7 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
 // GEAComponent — packet validation and dispatch
 // =============================================================================
 
-// pkt = [DEST][LEN][SRC][PAYLOAD...][CRC_LO][CRC_HI]  (already unescaped)
+// pkt = [DEST][LEN][SRC][PAYLOAD...][CRC_MSB][CRC_LSB]  (already unescaped)
 void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
   // Minimum viable packet: DEST + LEN + SRC + CMD + CRC_LO + CRC_HI = 6 bytes.
   if (pkt.size() < 6) {
@@ -313,8 +313,9 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
   }
 
   // Validate CRC: computed over everything except the last 2 (CRC) bytes.
+  // GEA3 wire order is CRC MSB first, then LSB (big-endian).
   size_t crc_offset = pkt.size() - 2;
-  uint16_t rx_crc = (uint16_t) pkt[crc_offset] | ((uint16_t) pkt[crc_offset + 1] << 8);
+  uint16_t rx_crc = ((uint16_t) pkt[crc_offset] << 8) | (uint16_t) pkt[crc_offset + 1];
   uint16_t calc_crc = crc16_(pkt.data(), crc_offset);
 
   if (rx_crc != calc_crc) {
