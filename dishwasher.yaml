@@ -115,7 +115,7 @@ sensor:
     accuracy_decimals: 0
     decode: uint8
 
-  # Cycle index: 0=AutoSense, 1=Heavy, 2=Normal, 3=1Hr Wash, 4=Rinse
+  # Cycle index (read-only mirror of the select below)
   - platform: gea
     gea_id: gea_hub
     name: "Cycle Index"
@@ -146,6 +146,46 @@ sensor:
     erd: 0x3107
     accuracy_decimals: 0
     decode: uint16_be
+
+# ---------------------------------------------------------------------------
+# Binary sensors
+# ---------------------------------------------------------------------------
+binary_sensor:
+  # ERD 0x3230 — 8-byte payload, first byte toggles 0/1
+  - platform: gea
+    gea_id: gea_hub
+    name: "ERD 0x3230 Active"
+    erd: 0x3230
+    bitmask: 0x01
+    byte_offset: 0
+
+# ---------------------------------------------------------------------------
+# Switch (writable binary ERDs)
+# ---------------------------------------------------------------------------
+switch:
+  # ERD 0x3230 — toggles 0/1; writes 0x01 (on) or 0x00 (off)
+  - platform: gea
+    gea_id: gea_hub
+    name: "ERD 0x3230 Switch"
+    erd: 0x3230
+
+# ---------------------------------------------------------------------------
+# Select (writable ERDs)
+# ---------------------------------------------------------------------------
+select:
+  # Wash cycle selection — writes to ERD 0x321B
+  - platform: gea
+    gea_id: gea_hub
+    name: "Wash Cycle"
+    erd: 0x321B
+    decode: uint8
+    icon: mdi:dishwasher
+    options:
+      0x00: "AutoSense"
+      0x01: "Heavy"
+      0x02: "Normal"
+      0x03: "1 Hr Wash"
+      0x04: "Rinse"
 
 # ---------------------------------------------------------------------------
 # Text sensors
