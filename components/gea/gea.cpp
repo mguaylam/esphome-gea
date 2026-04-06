@@ -94,18 +94,19 @@ uint16_t GEAComponent::crc16_(const uint8_t *data, size_t len) {
 }
 
 // Escape control bytes {0xE0, 0xE1, 0xE2, 0xE3}: prefix with GEA_ESC (0xE0),
-// then XOR the original byte with 0x80.
-//   0xE0 → 0xE0 0x60
-//   0xE1 → 0xE0 0x61
-//   0xE2 → 0xE0 0x62
-//   0xE3 → 0xE0 0x63
+// then send the original byte unchanged.  The receiver's state machine
+// distinguishes escaped data from real control bytes.
+//   0xE0 → 0xE0 0xE0
+//   0xE1 → 0xE0 0xE1
+//   0xE2 → 0xE0 0xE2
+//   0xE3 → 0xE0 0xE3
 std::vector<uint8_t> GEAComponent::escape_(const std::vector<uint8_t> &raw) {
   std::vector<uint8_t> out;
   out.reserve(raw.size() + 4);
   for (uint8_t b : raw) {
     if (b >= 0xE0 && b <= 0xE3) {
       out.push_back(GEA_ESC);
-      out.push_back(b ^ 0x80);
+      out.push_back(b);  // no transform — receiver uses state machine to distinguish
     } else {
       out.push_back(b);
     }
@@ -286,8 +287,8 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
       break;
 
     case RxState::ESCAPE:
-      // Unescape: reverse of (original ^ 0x80).
-      rx_buf_.push_back(byte ^ 0x80);
+      // Unescape: byte after ESC is the original byte as-is.
+      rx_buf_.push_back(byte);
       rx_state_ = RxState::IN_PACKET;
       break;
   }
