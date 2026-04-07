@@ -1,0 +1,38 @@
+name: Compile
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  compile:
+    name: ${{ matrix.config }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - dishwasher.yaml
+          - washer.yaml
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache ESPHome build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.esphome
+            .esphome
+          key: esphome-${{ matrix.config }}-${{ hashFiles(matrix.config, 'components/**') }}
+          restore-keys: |
+            esphome-${{ matrix.config }}-
+
+      - name: Install ESPHome
+        run: pip install esphome
+
+      - name: Compile ${{ matrix.config }}
+        run: esphome compile ${{ matrix.config }}
