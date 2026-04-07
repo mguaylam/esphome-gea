@@ -53,8 +53,7 @@ An [ESPHome](https://esphome.io/) external component for monitoring and controll
 | Part | Notes |
 |------|-------|
 | [Seeed XIAO ESP32-C3](https://wiki.seeedstudio.com/XIAO_ESP32C3_Getting_Started/) | Compact, 3.3 V, native USB |
-| FirstBuild RJ45 GEA breakout | Breaks out the GEA3 connector on GE appliances |
-| 3× indicator LEDs + resistors | Optional: heartbeat, Wi-Fi, bus status |
+| FirstBuild GEA adapter | RJ45 breakout, LEDs, and supporting components all included |
 
 ### Wiring
 
