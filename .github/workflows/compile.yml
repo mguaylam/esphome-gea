@@ -34,5 +34,15 @@ jobs:
       - name: Install ESPHome
         run: pip install esphome
 
+      - name: Create dummy secrets
+        run: |
+          cat > secrets.yaml << 'EOF'
+          wifi_ssid: "ci"
+          wifi_password: "ci"
+          api_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          ota_password: "ci"
+          ap_password: "ci"
+          EOF
+
       - name: Compile ${{ matrix.config }}
         run: esphome compile ${{ matrix.config }}
