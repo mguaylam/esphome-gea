@@ -28,9 +28,11 @@ float GEAEntity::decode_as_float(const std::vector<uint8_t> &data) const {
       return (rem >= 2) ? (float) ((uint16_t) d[1] << 8 | d[0]) : 0.0f;
 
     case GeaDecodeType::UINT32_BE:
-      return (rem >= 4)
-          ? (float) ((uint32_t) d[0] << 24 | (uint32_t) d[1] << 16 | (uint32_t) d[2] << 8 | d[3])
-          : 0.0f;
+      if (rem >= 4)
+        return (float) ((uint32_t) d[0] << 24 | (uint32_t) d[1] << 16 | (uint32_t) d[2] << 8 | d[3]);
+      if (rem == 3)
+        return (float) ((uint32_t) d[0] << 16 | (uint32_t) d[1] << 8 | d[2]);
+      return 0.0f;
 
     case GeaDecodeType::UINT32_LE:
       return (rem >= 4)
@@ -74,6 +76,47 @@ std::string GEAEntity::decode_as_hex(const std::vector<uint8_t> &data) const {
     result += hex;
   }
   return result;
+}
+
+void GEAEntity::encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const {
+  uint8_t n = data_size_;
+  if (n == 0) {
+    switch (decode_) {
+      case GeaDecodeType::UINT16_BE:
+      case GeaDecodeType::INT16_BE:
+      case GeaDecodeType::UINT16_LE:
+      case GeaDecodeType::INT16_LE:
+        n = 2;
+        break;
+      case GeaDecodeType::UINT32_BE:
+      case GeaDecodeType::INT32_BE:
+      case GeaDecodeType::UINT32_LE:
+      case GeaDecodeType::INT32_LE:
+        n = 4;
+        break;
+      default:
+        n = 1;
+        break;
+    }
+  }
+  bool le = false;
+  switch (decode_) {
+    case GeaDecodeType::UINT16_LE:
+    case GeaDecodeType::INT16_LE:
+    case GeaDecodeType::UINT32_LE:
+    case GeaDecodeType::INT32_LE:
+      le = true;
+      break;
+    default:
+      break;
+  }
+  if (le) {
+    for (uint8_t i = 0; i < n; i++)
+      out.push_back((val >> (i * 8)) & 0xFF);
+  } else {
+    for (int i = n - 1; i >= 0; i--)
+      out.push_back((val >> (i * 8)) & 0xFF);
+  }
 }
 
 // =============================================================================
@@ -199,6 +242,18 @@ void GEAComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Registered entities: %zu", entities_.size());
   for (auto *e : entities_) {
     ESP_LOGCONFIG(TAG, "    ERD 0x%04X", e->get_erd());
+  }
+  if (!discovered_erds_.empty()) {
+    ESP_LOGCONFIG(TAG, "  Discovered ERDs (%zu):", discovered_erds_.size());
+    for (auto &kv : discovered_erds_) {
+      std::string hex = "0x";
+      char buf[3];
+      for (uint8_t b : kv.second) {
+        snprintf(buf, sizeof(buf), "%02X", b);
+        hex += buf;
+      }
+      ESP_LOGCONFIG(TAG, "    0x%04X  (%zuB)  %s", kv.first, kv.second.size(), hex.c_str());
+    }
   }
 }
 
@@ -437,16 +492,21 @@ void GEAComponent::dispatch_erd_(uint16_t erd, const std::vector<uint8_t> &data)
   }
 }
 
-// Log a discovered ERD (called for every publication received during discovery).
+// Track discovered ERDs — log only on first appearance, update silently thereafter.
 void GEAComponent::log_discovery_(uint16_t erd, const std::vector<uint8_t> &data) {
-  // Build hex string of the raw value
-  std::string hex = "0x";
-  char buf[3];
-  for (uint8_t b : data) {
-    snprintf(buf, sizeof(buf), "%02X", b);
-    hex += buf;
+  bool is_new = (discovered_erds_.find(erd) == discovered_erds_.end());
+  discovered_erds_[erd] = data;
+
+  if (is_new) {
+    std::string hex = "0x";
+    char buf[3];
+    for (uint8_t b : data) {
+      snprintf(buf, sizeof(buf), "%02X", b);
+      hex += buf;
+    }
+    ESP_LOGI(TAG, "New ERD 0x%04X (%zu B): %s  [total discovered: %zu]",
+             erd, data.size(), hex.c_str(), discovered_erds_.size());
   }
-  ESP_LOGI(TAG, "Discovered ERD 0x%04X (%zu bytes): %s", erd, data.size(), hex.c_str());
 }
 
 }  // namespace gea

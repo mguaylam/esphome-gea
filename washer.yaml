@@ -1,0 +1,616 @@
+# ESPHome config for a GE Ultrafast Combo washer/dryer via GEA3 protocol
+# Appliance: GE PFQ97HSPVDS (Ultrafast Combo)
+# Hardware: Seeed XIAO ESP32-C3 on the FirstBuild carrier board (RJ45 breakout)
+# Framework: Arduino (same as original geappliances/home-assistant-adapter firmware)
+# Baud rate: 230400 (GEA3)
+# TX = GPIO21 (D6), RX = GPIO20 (D7)
+
+esphome:
+  name: ge-ultrafast-combo
+  friendly_name: GE Ultrafast Combo
+  project:
+    name: GE.PFQ97HSPVDS
+    version: "1.0.0"
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: arduino
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [gea]
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "ge-ultrafast fallback"
+    password: !secret ap_password
+  on_connect:
+    - output.turn_on: led_wifi
+  on_disconnect:
+    - output.turn_off: led_wifi
+
+# ---------------------------------------------------------------------------
+# Status LEDs
+# ---------------------------------------------------------------------------
+status_led:
+  pin: GPIO2
+
+output:
+  - platform: gpio
+    pin: GPIO3
+    id: led_wifi
+  - platform: gpio
+    pin: GPIO4
+    id: led_gea
+
+interval:
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: return id(gea_hub).is_bus_connected();
+          then:
+            - output.turn_on: led_gea
+          else:
+            - output.turn_off: led_gea
+
+# ---------------------------------------------------------------------------
+# UART — GEA3 full-duplex, 230400 baud
+# ---------------------------------------------------------------------------
+uart:
+  id: uart_gea
+  tx_pin: GPIO21
+  rx_pin: GPIO20
+  baud_rate: 230400
+  data_bits: 8
+  stop_bits: 1
+  parity: NONE
+  rx_buffer_size: 512
+
+# ---------------------------------------------------------------------------
+# GEA3 hub
+# ---------------------------------------------------------------------------
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  src_address: 0xE4
+  resubscribe_interval: 60s
+
+# ---------------------------------------------------------------------------
+# Sensors (read-only)
+# ---------------------------------------------------------------------------
+sensor:
+  # Time remaining for the full program (seconds → minutes via filter)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Temps restant du programme"
+    erd: 0x2007
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: min
+    accuracy_decimals: 1
+    icon: mdi:timer
+    filters:
+      - multiply: 0.0166667  # seconds → minutes
+
+  # Wash time remaining (seconds → minutes)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Temps restant lavage"
+    erd: 0x2122
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: min
+    accuracy_decimals: 1
+    icon: mdi:timer
+
+  # Dry time remaining (seconds → minutes)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Temps restant séchage"
+    erd: 0x2123
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: min
+    accuracy_decimals: 1
+    icon: mdi:timer
+
+  # Delayed start (minutes)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Départ différé"
+    erd: 0x2010
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    icon: mdi:clock-start
+
+  # Drum speed (RPM)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Vitesse tambour"
+    erd: 0x202C
+    decode: uint16_be
+    unit_of_measurement: rpm
+    accuracy_decimals: 0
+    icon: mdi:sync-circle
+    entity_category: diagnostic
+
+  # Water temperature (Fahrenheit × 10 → Celsius via filter)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Température de l'eau"
+    erd: 0x2043
+    decode: uint16_be
+    device_class: temperature
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    filters:
+      - lambda: return (x / 10.0 - 32.0) * 5.0 / 9.0;
+
+  # Pressure (raw → Pa via filter)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Pression"
+    erd: 0x2042
+    decode: uint16_be
+    device_class: pressure
+    unit_of_measurement: Pa
+    accuracy_decimals: 2
+    icon: mdi:gauge
+    entity_category: diagnostic
+    filters:
+      - lambda: return x / 1000.0 * 248.84;
+
+# ---------------------------------------------------------------------------
+# Text sensors (read-only with value mappings)
+# ---------------------------------------------------------------------------
+text_sensor:
+  # Machine state
+  - platform: gea
+    gea_id: gea_hub
+    name: "État"
+    erd: 0x2000
+    decode: uint8
+    icon: mdi:play-pause
+    options:
+      0x00: "Inactif"
+      0x01: "En attente"
+      0x02: "En marche"
+      0x03: "En pause"
+      0x04: "Cycle terminé"
+      0x05: "Démarrage différé DSM"
+      0x06: "Démarrage différé"
+      0x07: "Pause différée"
+      0x08: "Délai de vidange expiré"
+      0x09: "Mise en service"
+      0x10: "Rinçage en vrac"
+      0x11: "Jumelage Bluetooth"
+      0x80: "Nettoyage vocal"
+
+  # Current program
+  - platform: gea
+    gea_id: gea_hub
+    name: "Programme"
+    erd: 0x200A
+    decode: uint8
+    icon: mdi:washing-machine
+    options:
+      0x00: "Non défini"
+      0x01: "Nettoyage du tambour"
+      0x02: "Vidange et essorage"
+      0x03: "Rinçage rapide"
+      0x04: "Articles volumineux"
+      0x05: "Désinfecter"
+      0x06: "Serviettes ou draps"
+      0x07: "Rafraîchissement vapeur"
+      0x08: "Normal ou charge mixte"
+      0x09: "Blancs"
+      0x0A: "Couleurs foncées"
+      0x0B: "Jeans"
+      0x0C: "Lavage à la main"
+      0x0D: "Délicat"
+      0x0E: "Lavage rapide"
+      0x0F: "Intensif"
+      0x10: "Allergène"
+      0x11: "Nettoyage en profondeur"
+      0x12: "Rinçage et essorage"
+      0x13: "Lavage article unique"
+      0x14: "Couleurs"
+      0x15: "Lavage à froid"
+      0x16: "Station d'eau"
+      0x17: "Nettoyage cuve"
+      0x18: "Tout-aller avec vapeur"
+      0x19: "Taches avec vapeur"
+      0x1A: "Nettoyage en profondeur"
+      0x1B: "Literie volumineuse"
+      0x1C: "Normal"
+      0x1D: "Lavage rapide"
+      0x1E: "Désinfecter avec Oxi"
+      0x1F: "Auto-nettoyage"
+      0x20: "Serviettes"
+      0x21: "Trempage"
+      0x22: "Laine"
+      0x23: "Ultra Fresh Vent"
+      0x24: "Désinfecter + Allergène"
+      0x25: "Essorage seulement"
+      0x26: "Quotidien"
+      0x27: "Jouets en peluche"
+      0x28: "Chaussures de sport"
+      0x29: "Synthétiques"
+      0x2A: "Soie"
+      0x2B: "Denim"
+      0x2C: "Nettoyage tambour"
+      0x2D: "Draps"
+      0x2E: "Rapide 15"
+      0x2F: "Rapide 30"
+      0x30: "Repassage facile"
+      0x31: "Sports"
+      0x32: "Éco 40-60"
+      0x33: "20°C"
+      0x34: "Lavage tiède"
+      0x35: "Lavage chaud"
+      0x36: "Maillots de bain"
+      0x37: "Éco"
+      0x38: "Express"
+      0x39: "Mixte"
+      0x3A: "Cycle rapide"
+      0x3B: "Couette"
+      0x80: "Cotons"
+      0x81: "Entretien facile"
+      0x82: "Vêtements actifs"
+      0x83: "Séchage minuté"
+      0x84: "Défroissage"
+      0x85: "Rapide ou Air frais"
+      0x86: "Rafraîchir vapeur"
+      0x87: "Défroissage vapeur"
+      0x88: "Séchage rapide"
+      0x89: "Mixte"
+      0x8A: "Séchage rapide"
+      0x8B: "Tout-aller"
+      0x8C: "Réchauffage"
+      0x8D: "Économie d'énergie"
+      0x8E: "Antibactérien"
+      0x8F: "Séchage sur grille"
+      0x90: "Soins bébé"
+      0x91: "Séchage auto"
+      0x92: "Auto extra sec"
+      0x93: "Tissus infroissables"
+      0x94: "Lien machine à laver"
+      0x95: "Auto légèrement humide"
+      0x96: "Ventilation intelligente"
+      0x97: "Pré-repassage"
+      0x98: "Hygiène"
+      0x99: "Air frais"
+      0x9A: "Plein air"
+      0x9B: "Ultra délicat"
+      0x9C: "Parfum"
+      0x9D: "Vapeur désinfectante"
+      0x9E: "Durable"
+      0x9F: "Chaussures"
+      0xA0: "Chemises"
+      0xA1: "Rafraîchir"
+      0xA2: "Rafraîchissement"
+      0xA3: "Éco frais"
+      0xA4: "Rinçage et séchage"
+      0xA5: "Cuir"
+      0xA6: "Vêtements d'extérieur"
+      0xA7: "Rafraîchir mixte"
+      0xA8: "Rafraîchir chemises"
+      0xA9: "Rafraîchir délicat"
+      0xAA: "Rafraîchir désinfection"
+      0xAB: "Léger"
+      0xAC: "Intensif"
+      0xAD: "Laine ou tricot"
+      0xAE: "Pluie ou neige"
+      0xAF: "Articles enfants"
+      0xB0: "Costumes ou manteaux"
+      0xB1: "Plis pantalon"
+      0xB2: "Normal vapeur"
+      0xB3: "Blancs vapeur"
+      0xB4: "Serviettes vapeur"
+      0xB5: "Désinfection vapeur"
+      0xB6: "Duvet"
+      0xB7: "Séchage nuit"
+      0xB8: "Silencieux"
+      0xFF: "Réinitialiser"
+
+  # Sub-cycle state
+  - platform: gea
+    gea_id: gea_hub
+    name: "Sous-programme"
+    erd: 0x2001
+    decode: uint8
+    icon: mdi:washing-machine
+    options:
+      0x00: "Non applicable"
+      0x01: "Remplissage"
+      0x02: "Trempage"
+      0x03: "Lavage"
+      0x04: "Rinçage"
+      0x05: "Essorage"
+      0x06: "Vidange"
+      0x07: "Essorage supplémentaire"
+      0x08: "Rinçage supplémentaire"
+      0x09: "Culbutage"
+      0x0A: "Détection taille de brassée"
+      0x0B: "Prélavage"
+      0x0C: "Détection de saleté"
+      0x0D: "Déverrouillage"
+      0x80: "Séchage"
+      0x81: "Vapeur bruine"
+      0x82: "Refroidissement"
+      0x83: "Culbutage prolongé"
+      0x84: "Humide"
+      0x85: "Air frais"
+      0x86: "Détection"
+      0x87: "Refroidissement forcé"
+      0x88: "Sans plis"
+      0x89: "Préparation"
+      0x8A: "Vaporisation"
+      0x8B: "Désinfection"
+      0x8C: "Cycle nuit"
+      0x8D: "Détection de charge"
+      0x8E: "Ultra Fresh"
+      0x8F: "Poils d'animaux"
+
+  # Detergent level
+  - platform: gea
+    gea_id: gea_hub
+    name: "Niveau de détergent"
+    erd: 0x203C
+    decode: uint8
+    icon: mdi:chart-bubble
+    options:
+      0x00: "Inconnu"
+      0x01: "Bas"
+      0x02: "Rempli"
+      0x03: "Capteur non connecté"
+      0x04: "Erreur de capteur"
+
+  # Softener level
+  - platform: gea
+    gea_id: gea_hub
+    name: "Niveau d'assouplissant"
+    erd: 0x213D
+    decode: uint8
+    icon: mdi:feather
+    options:
+      0x00: "Inconnu"
+      0x01: "Bas"
+      0x02: "Rempli"
+      0x03: "Capteur non connecté"
+      0x04: "Erreur de capteur"
+
+# ---------------------------------------------------------------------------
+# Binary sensors
+# ---------------------------------------------------------------------------
+binary_sensor:
+  # Door — 0x00 = open, 0x01 = closed (inverted logic)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Porte"
+    erd: 0x2012
+    device_class: opening
+    inverted: true
+
+  # Pump running
+  - platform: gea
+    gea_id: gea_hub
+    name: "Pompe"
+    erd: 0x2026
+    device_class: running
+    icon: mdi:pump
+    entity_category: diagnostic
+
+  # Remote start enabled
+  - platform: gea
+    gea_id: gea_hub
+    name: "Démarrage à distance"
+    erd: 0x214A
+    icon: mdi:remote
+
+  # Lint filter — 0x00 = needs attention, 0x01 = OK (inverted)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Filtre"
+    erd: 0x215F
+    device_class: problem
+    icon: mdi:air-filter
+    entity_category: diagnostic
+    inverted: true
+
+  # Door lock — 0x00 = locked, 0x01 = unlocked (inverted)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Verrou"
+    erd: 0x2013
+    device_class: lock
+    inverted: true
+
+# ---------------------------------------------------------------------------
+# Switches (read-write binary ERDs)
+# ---------------------------------------------------------------------------
+switch:
+  # Extra dry
+  - platform: gea
+    gea_id: gea_hub
+    name: "Séchage supplémentaire"
+    erd: 0x213A
+    write_erd: 0x213B
+    icon: mdi:tumble-dryer
+
+  # Pre-wash
+  - platform: gea
+    gea_id: gea_hub
+    name: "Prélavage"
+    erd: 0x205B
+    write_erd: 0x205A
+    icon: mdi:liquid-spot
+
+  # Extra rinse
+  - platform: gea
+    gea_id: gea_hub
+    name: "Rinçage supplémentaire"
+    erd: 0x20B3
+    write_erd: 0x20B4
+    icon: mdi:water-plus
+
+  # Wash complete notification
+  - platform: gea
+    gea_id: gea_hub
+    name: "Notification lavage complété"
+    erd: 0x2155
+    write_erd: 0x2156
+    icon: mdi:bell
+
+  # Anti-wrinkle
+  - platform: gea
+    gea_id: gea_hub
+    name: "Antifroissement"
+    erd: 0x2053
+    write_erd: 0x2051
+    icon: mdi:iron
+
+  # Extra water (MaxFill) — on=0x02, off=0x00
+  - platform: gea
+    gea_id: gea_hub
+    name: "Plus d'eau"
+    erd: 0x20AD
+    write_erd: 0x20AE
+    payload_on: 0x02
+    payload_off: 0x00
+    icon: mdi:waves-arrow-up
+
+# ---------------------------------------------------------------------------
+# Selects (read-write enum ERDs)
+# ---------------------------------------------------------------------------
+select:
+  # Detergent dosing — 3-byte payload, read 0x20C2, write 0x20C1
+  # Values: 000100=Off, 000101=Moins, 000102=Plus, 000103=Auto
+  - platform: gea
+    gea_id: gea_hub
+    name: "Dosage détergent"
+    erd: 0x20C2
+    write_erd: 0x20C1
+    decode: uint32_be
+    data_size: 3
+    icon: mdi:chart-bubble
+    options:
+      0x000103: "Auto"
+      0x000102: "Plus"
+      0x000101: "Moins"
+      0x000100: "Éteint"
+
+  # Softener dosing — 3-byte payload, read 0x2144, write 0x2143
+  # Values: 010100=Off, 010101=Moins, 010102=Plus, 010103=Auto
+  - platform: gea
+    gea_id: gea_hub
+    name: "Dosage assouplissant"
+    erd: 0x2144
+    write_erd: 0x2143
+    decode: uint32_be
+    data_size: 3
+    icon: mdi:feather
+    options:
+      0x010103: "Auto"
+      0x010102: "Plus"
+      0x010101: "Moins"
+      0x010100: "Éteint"
+
+  # Spin speed — read 0x2139, write 0x212A
+  - platform: gea
+    gea_id: gea_hub
+    name: "Vitesse d'essorage"
+    erd: 0x2139
+    write_erd: 0x212A
+    decode: uint8
+    icon: mdi:sync-circle
+    options:
+      0x00: "Aucun essorage"
+      0x01: "Bas"
+      0x02: "Moyen"
+      0x03: "Élevé"
+      0x04: "Très élevé"
+
+  # Soil level — read 0x20BE, write 0x20BF
+  - platform: gea
+    gea_id: gea_hub
+    name: "Niveau de saleté"
+    erd: 0x20BE
+    write_erd: 0x20BF
+    decode: uint8
+    icon: mdi:liquid-spot
+    options:
+      0x01: "Extra léger"
+      0x02: "Léger"
+      0x03: "Normal"
+      0x04: "Sale"
+      0x05: "Très sale"
+
+  # Temperature — read 0x20BB, write 0x20BC
+  - platform: gea
+    gea_id: gea_hub
+    name: "Température"
+    erd: 0x20BB
+    write_erd: 0x20BC
+    decode: uint8
+    icon: mdi:thermometer-water
+    options:
+      0x01: "Robinet froid"
+      0x02: "Froid"
+      0x05: "Tiède"
+      0x06: "Chaud"
+      0x07: "Très chaud"
+
+  # Additional programs — read 0x20D3, write 0x20D1
+  - platform: gea
+    gea_id: gea_hub
+    name: "Programmes additionnels"
+    erd: 0x20D3
+    write_erd: 0x20D1
+    decode: uint8
+    icon: mdi:plus-network
+    options:
+      0x11: "Nettoyage en profondeur"
+      0x0B: "Jeans"
+      0x36: "Maillots de bain"
+      0x85: "Sans chaleur"
+
+# ---------------------------------------------------------------------------
+# Buttons (fire-and-forget actions)
+# ---------------------------------------------------------------------------
+button:
+  # Remote start
+  - platform: gea
+    gea_id: gea_hub
+    name: "Démarrer à distance"
+    erd: 0x2149
+    payload: [0x00]
+    icon: mdi:play-network
+
+  # Remote stop
+  - platform: gea
+    gea_id: gea_hub
+    name: "Arrêter à distance"
+    erd: 0x2040
+    payload: [0x00]
+    icon: mdi:close-network

@@ -7,6 +7,11 @@
 esphome:
   name: ge-dishwasher
   friendly_name: GE Dishwasher
+  # These populate the HA device info panel (Manufacturer / Model / Version).
+  # project.name → shown as "Model" in HA; project.version → "SW Version".
+  project:
+    name: GE.PDP715SYV0FS
+    version: "1.0.0"
 
 esp32:
   board: seeed_xiao_esp32c3
@@ -94,10 +99,10 @@ gea:
   resubscribe_interval: 60s  # re-send subscribe_all if appliance power-cycles
 
 # ---------------------------------------------------------------------------
-# Sensors — ERDs discovered from PDP715SYV0FS dishwasher
+# Sensors (read-only) — ERDs discovered from PDP715SYV0FS dishwasher
 # ---------------------------------------------------------------------------
 sensor:
-  # Elapsed time counter (seconds, increments at 1 Hz while running)
+  # Elapsed time counter — total_increasing so HA tracks it correctly in history
   - platform: gea
     gea_id: gea_hub
     name: "Elapsed Time"
@@ -106,74 +111,75 @@ sensor:
     accuracy_decimals: 0
     decode: uint32_be
     icon: mdi:timer-outline
+    state_class: total_increasing
 
-  # Machine state (e.g. 0x02 = idle)
+  # Machine state (e.g. 0x02 = idle) — diagnostic, not shown on main dashboard
   - platform: gea
     gea_id: gea_hub
     name: "Machine State"
     erd: 0x3001
     accuracy_decimals: 0
     decode: uint8
+    entity_category: diagnostic
 
-  # Cycle index (read-only mirror of the select below)
-  - platform: gea
-    gea_id: gea_hub
-    name: "Cycle Index"
-    erd: 0x321B
-    accuracy_decimals: 0
-    decode: uint8
-
-  # Per-cycle value (varies per cycle selection)
+  # Per-cycle value (varies per cycle selection) — diagnostic
   - platform: gea
     gea_id: gea_hub
     name: "Cycle Parameter"
     erd: 0xD004
     accuracy_decimals: 0
     decode: uint16_be
+    entity_category: diagnostic
 
-  # Unknown 2-byte value (0x0009 / 0x000A observed)
+  # Unknown 2-byte value (0x0009 / 0x000A observed) — diagnostic
   - platform: gea
     gea_id: gea_hub
     name: "ERD 0x3084"
     erd: 0x3084
     accuracy_decimals: 0
     decode: uint16_be
+    entity_category: diagnostic
 
-  # Unknown 2-byte value (0x0000 / 0x0008 / 0x0009 observed)
+  # Unknown 2-byte value (0x0000 / 0x0008 / 0x0009 observed) — diagnostic
   - platform: gea
     gea_id: gea_hub
     name: "ERD 0x3107"
     erd: 0x3107
     accuracy_decimals: 0
     decode: uint16_be
+    entity_category: diagnostic
 
 # ---------------------------------------------------------------------------
-# Binary sensors
+# Number (read-write numeric ERDs — updates from bus AND writable from HA)
 # ---------------------------------------------------------------------------
-binary_sensor:
-  # ERD 0x3230 — 8-byte payload, first byte toggles 0/1
+number:
+  # Cycle parameter — writable numeric value
   - platform: gea
     gea_id: gea_hub
-    name: "ERD 0x3230 Active"
-    erd: 0x3230
-    bitmask: 0x01
-    byte_offset: 0
+    name: "Cycle Parameter Control"
+    erd: 0xD004
+    decode: uint16_be
+    min_value: 0
+    max_value: 65535
+    step: 1
+    entity_category: diagnostic
 
 # ---------------------------------------------------------------------------
-# Switch (writable binary ERDs)
+# Switch (read-write binary ERDs — updates from bus AND toggleable from HA)
 # ---------------------------------------------------------------------------
 switch:
-  # ERD 0x3230 — toggles 0/1; writes 0x01 (on) or 0x00 (off)
+  # ERD 0x3230 — toggles 0/1 on the bus; reflects appliance state in HA
   - platform: gea
     gea_id: gea_hub
     name: "ERD 0x3230 Switch"
     erd: 0x3230
+    entity_category: diagnostic
 
 # ---------------------------------------------------------------------------
-# Select (writable ERDs)
+# Select (read-write enum ERDs — updates from bus AND selectable from HA)
 # ---------------------------------------------------------------------------
 select:
-  # Wash cycle selection — writes to ERD 0x321B
+  # Wash cycle selection — reads cycle index from bus, writes new cycle to appliance
   - platform: gea
     gea_id: gea_hub
     name: "Wash Cycle"
@@ -188,7 +194,21 @@ select:
       0x04: "Rinse"
 
 # ---------------------------------------------------------------------------
-# Text sensors
+# Button (fire-and-forget ERD writes — press triggers a write to the bus)
+# ---------------------------------------------------------------------------
+button:
+  # Read ERD 0x0001 (model number) — test that write_erd round-trips work
+  # internal: true → visible in ESPHome web UI only, not exposed to HA
+  - platform: gea
+    gea_id: gea_hub
+    name: "Request Model Number"
+    erd: 0x0001
+    payload: [0x00]
+    icon: mdi:information-outline
+    internal: true
+
+# ---------------------------------------------------------------------------
+# Text sensors (read-only)
 # ---------------------------------------------------------------------------
 text_sensor:
   # Cycle name as ASCII text (e.g. "AutoSense", "Heavy", "Normal")
@@ -199,49 +219,49 @@ text_sensor:
     decode: ascii
     icon: mdi:dishwasher
 
-  # Appliance model number (ASCII)
+  # Appliance model number — diagnostic, static info
   - platform: gea
     gea_id: gea_hub
     name: "Model Number"
     erd: 0x0001
     decode: ascii
+    entity_category: diagnostic
 
-  # Cycle status — 6 bytes, raw hex for inspection
+  # Cycle status — diagnostic raw hex for inspection
   - platform: gea
     gea_id: gea_hub
     name: "Cycle Status Raw"
     erd: 0x3000
+    entity_category: diagnostic
 
-  # Cycle config — 3 bytes, raw hex for inspection
+  # Cycle config — diagnostic raw hex for inspection
   - platform: gea
     gea_id: gea_hub
     name: "Cycle Config Raw"
     erd: 0x3007
+    entity_category: diagnostic
 
-  # 8-byte ERD with toggling value
-  - platform: gea
-    gea_id: gea_hub
-    name: "ERD 0x3230 Raw"
-    erd: 0x3230
-
-  # Unknown 4-byte ERD
+  # Unknown ERDs — all diagnostic until identified
   - platform: gea
     gea_id: gea_hub
     name: "ERD 0x322A Raw"
     erd: 0x322A
+    entity_category: diagnostic
 
-  # Unknown 6-byte ERDs
   - platform: gea
     gea_id: gea_hub
     name: "ERD 0x3227 Raw"
     erd: 0x3227
+    entity_category: diagnostic
 
   - platform: gea
     gea_id: gea_hub
     name: "ERD 0x3228 Raw"
     erd: 0x3228
+    entity_category: diagnostic
 
   - platform: gea
     gea_id: gea_hub
     name: "ERD 0x3229 Raw"
     erd: 0x3229
+    entity_category: diagnostic

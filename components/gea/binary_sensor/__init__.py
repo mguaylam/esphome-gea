@@ -13,6 +13,8 @@ from .. import (
 
 DEPENDENCIES = ["gea"]
 
+CONF_INVERTED = "inverted"
+
 GEABinarySensor = gea_ns.class_("GEABinarySensor", binary_sensor.BinarySensor, cg.Component)
 
 CONFIG_SCHEMA = (
@@ -23,6 +25,7 @@ CONFIG_SCHEMA = (
             cv.Required(CONF_ERD): cv.hex_uint16_t,
             cv.Optional(CONF_BITMASK, default=0xFF): cv.hex_uint8_t,
             cv.Optional(CONF_BYTE_OFFSET, default=0): cv.uint8_t,
+            cv.Optional(CONF_INVERTED, default=False): cv.boolean,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -38,4 +41,6 @@ async def to_code(config):
     cg.add(var.set_erd(config[CONF_ERD]))
     cg.add(var.set_bitmask(config[CONF_BITMASK]))
     cg.add(var.set_byte_offset(config[CONF_BYTE_OFFSET]))
+    if config[CONF_INVERTED]:
+        cg.add(var.set_inverted(True))
     cg.add(hub.register_entity(var))

@@ -17,6 +17,8 @@ CONF_ERD = "erd"
 CONF_DECODE = "decode"
 CONF_BYTE_OFFSET = "byte_offset"
 CONF_BITMASK = "bitmask"
+CONF_WRITE_ERD = "write_erd"
+CONF_DATA_SIZE = "data_size"
 CONF_DEST_ADDRESS = "dest_address"
 CONF_SRC_ADDRESS = "src_address"
 CONF_RESUBSCRIBE_INTERVAL = "resubscribe_interval"
@@ -38,6 +40,24 @@ DECODE_TYPES = {
     "raw":       GeaDecodeType.RAW,
     "ascii":     GeaDecodeType.ASCII,
 }
+
+
+def validate_options(value):
+    """Accept {int_or_hex_str: label_str} and normalise keys to int."""
+    if not isinstance(value, dict):
+        raise cv.Invalid("options must be a mapping of integer keys to string labels")
+    result = {}
+    for k, v in value.items():
+        if isinstance(k, str):
+            try:
+                key = int(k, 0)  # handles "0x04", "4", etc.
+            except ValueError:
+                raise cv.Invalid(f"option key {k!r} is not a valid integer")
+        else:
+            key = int(k)
+        result[key] = str(v)
+    return result
+
 
 CONFIG_SCHEMA = cv.Schema(
     {

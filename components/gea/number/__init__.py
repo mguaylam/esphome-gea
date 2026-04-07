@@ -1,7 +1,12 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import select
-from esphome.const import CONF_ID, CONF_OPTIONS
+from esphome.components import number
+from esphome.const import (
+    CONF_ID,
+    CONF_MAX_VALUE,
+    CONF_MIN_VALUE,
+    CONF_STEP,
+)
 from .. import (
     gea_ns,
     GEAComponent,
@@ -10,28 +15,27 @@ from .. import (
     CONF_DECODE,
     CONF_BYTE_OFFSET,
     CONF_WRITE_ERD,
-    CONF_DATA_SIZE,
     DECODE_TYPES,
-    validate_options,
 )
 
 DEPENDENCIES = ["gea"]
 
-GEASelect = gea_ns.class_("GEASelect", select.Select, cg.Component)
+GEANumber = gea_ns.class_("GEANumber", number.Number, cg.Component)
 
 CONFIG_SCHEMA = (
-    select.select_schema(GEASelect)
+    number.number_schema(GEANumber)
     .extend(
         {
             cv.GenerateID(CONF_GEA_ID): cv.use_id(GEAComponent),
             cv.Required(CONF_ERD): cv.hex_uint16_t,
-            cv.Required(CONF_OPTIONS): validate_options,
             cv.Optional(CONF_DECODE, default="uint8"): cv.enum(
                 DECODE_TYPES, lower=True
             ),
             cv.Optional(CONF_BYTE_OFFSET, default=0): cv.uint8_t,
+            cv.Optional(CONF_MIN_VALUE, default=0): cv.float_,
+            cv.Optional(CONF_MAX_VALUE, default=255): cv.float_,
+            cv.Optional(CONF_STEP, default=1): cv.float_,
             cv.Optional(CONF_WRITE_ERD): cv.hex_uint16_t,
-            cv.Optional(CONF_DATA_SIZE): cv.uint8_t,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -39,10 +43,12 @@ CONFIG_SCHEMA = (
 
 
 async def to_code(config):
-    options_map = config[CONF_OPTIONS]
-    option_labels = list(options_map.values())
-
-    var = await select.new_select(config, options=option_labels)
+    var = await number.new_number(
+        config,
+        min_value=config[CONF_MIN_VALUE],
+        max_value=config[CONF_MAX_VALUE],
+        step=config[CONF_STEP],
+    )
     await cg.register_component(var, config)
 
     hub = await cg.get_variable(config[CONF_GEA_ID])
@@ -52,10 +58,5 @@ async def to_code(config):
 
     if CONF_WRITE_ERD in config:
         cg.add(var.set_write_erd(config[CONF_WRITE_ERD]))
-    if CONF_DATA_SIZE in config:
-        cg.add(var.set_data_size(config[CONF_DATA_SIZE]))
-
-    for key, label in options_map.items():
-        cg.add(var.add_option(key, label))
 
     cg.add(hub.register_entity(var))

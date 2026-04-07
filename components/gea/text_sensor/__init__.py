@@ -10,9 +10,12 @@ from .. import (
     CONF_DECODE,
     CONF_BYTE_OFFSET,
     DECODE_TYPES,
+    validate_options,
 )
 
 DEPENDENCIES = ["gea"]
+
+CONF_OPTIONS = "options"
 
 GEATextSensor = gea_ns.class_("GEATextSensor", text_sensor.TextSensor, cg.Component)
 
@@ -27,6 +30,8 @@ CONFIG_SCHEMA = (
                 DECODE_TYPES, lower=True
             ),
             cv.Optional(CONF_BYTE_OFFSET, default=0): cv.uint8_t,
+            # Optional value-to-label mapping (like select, but read-only).
+            cv.Optional(CONF_OPTIONS): validate_options,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -42,4 +47,9 @@ async def to_code(config):
     cg.add(var.set_erd(config[CONF_ERD]))
     cg.add(var.set_decode(config[CONF_DECODE]))
     cg.add(var.set_byte_offset(config[CONF_BYTE_OFFSET]))
+
+    if CONF_OPTIONS in config:
+        for key, label in config[CONF_OPTIONS].items():
+            cg.add(var.add_option(key, label))
+
     cg.add(hub.register_entity(var))

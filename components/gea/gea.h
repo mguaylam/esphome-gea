@@ -61,21 +61,28 @@ class GEAComponent;
 class GEAEntity {
  public:
   void set_erd(uint16_t erd) { erd_ = erd; }
+  void set_write_erd(uint16_t erd) { write_erd_ = erd; has_write_erd_ = true; }
   void set_decode(GeaDecodeType decode) { decode_ = decode; }
   void set_bitmask(uint8_t bitmask) { bitmask_ = bitmask; }
   void set_byte_offset(uint8_t offset) { byte_offset_ = offset; }
+  void set_data_size(uint8_t size) { data_size_ = size; }
   void set_parent(GEAComponent *parent) { parent_ = parent; }
 
   uint16_t get_erd() const { return erd_; }
+  // Returns write_erd if explicitly set, otherwise falls back to erd.
+  uint16_t get_write_erd() const { return has_write_erd_ ? write_erd_ : erd_; }
 
   // Called by GEAComponent when a matching ERD value arrives
   virtual void on_erd_data(const std::vector<uint8_t> &data) = 0;
 
  protected:
   uint16_t erd_{0};
+  uint16_t write_erd_{0};
+  bool has_write_erd_{false};
   GeaDecodeType decode_{GeaDecodeType::RAW};
   uint8_t bitmask_{0xFF};
   uint8_t byte_offset_{0};
+  uint8_t data_size_{0};  // 0 = auto from decode type
   GEAComponent *parent_{nullptr};
 
   // Decode the ERD byte vector into a numeric float value
@@ -83,6 +90,10 @@ class GEAEntity {
 
   // Decode the ERD byte vector into a hex string like "0x0100"
   std::string decode_as_hex(const std::vector<uint8_t> &data) const;
+
+  // Encode a uint32 value into bytes using the configured decode type and data_size.
+  // Used by writable entities (select, number) to convert a value back to ERD bytes.
+  void encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const;
 };
 
 // ---------------------------------------------------------------------------
@@ -159,6 +170,10 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // Raw byte counter — reported periodically so we can confirm UART is alive.
   uint32_t rx_byte_count_{0};
   uint32_t last_stats_ms_{0};
+
+  // ERD discovery map: ERD address → most recently received data bytes.
+  // Populated on first publication of each ERD; updated silently thereafter.
+  std::map<uint16_t, std::vector<uint8_t>> discovered_erds_;
 };
 
 }  // namespace gea
