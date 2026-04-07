@@ -1,7 +1,7 @@
 # ESPHome config for a GE Ultrafast Combo washer/dryer via GEA3 protocol
 # Appliance: GE PFQ97HSPVDS (Ultrafast Combo)
 # Hardware: Seeed XIAO ESP32-C3 on the FirstBuild carrier board (RJ45 breakout)
-# Framework: Arduino (same as original geappliances/home-assistant-adapter firmware)
+# Framework: ESP-IDF
 # Baud rate: 230400 (GEA3)
 # TX = GPIO21 (D6), RX = GPIO20 (D7)
 
@@ -33,6 +33,8 @@ api:
 ota:
   - platform: esphome
     password: !secret ota_password
+
+web_server:
 
 wifi:
   ssid: !secret wifi_ssid
@@ -107,7 +109,7 @@ sensor:
     accuracy_decimals: 1
     icon: mdi:timer
     filters:
-      - multiply: 0.0166667  # seconds → minutes
+      - lambda: return x / 60.0;  # seconds → minutes
 
   # Wash time remaining (seconds → minutes)
   - platform: gea
@@ -119,6 +121,8 @@ sensor:
     unit_of_measurement: min
     accuracy_decimals: 1
     icon: mdi:timer
+    filters:
+      - lambda: return x / 60.0;  # seconds → minutes
 
   # Dry time remaining (seconds → minutes)
   - platform: gea
@@ -130,6 +134,8 @@ sensor:
     unit_of_measurement: min
     accuracy_decimals: 1
     icon: mdi:timer
+    filters:
+      - lambda: return x / 60.0;  # seconds → minutes
 
   # Delayed start (minutes)
   - platform: gea
@@ -310,7 +316,7 @@ text_sensor:
       0xA1: "Rafraîchir"
       0xA2: "Rafraîchissement"
       0xA3: "Éco frais"
-      0xA4: "Rinçage et séchage"
+      0xA4: "Rinçage et essorage"
       0xA5: "Cuir"
       0xA6: "Vêtements d'extérieur"
       0xA7: "Rafraîchir mixte"
