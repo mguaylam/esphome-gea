@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import esphome.codegen as cg
@@ -9,7 +10,16 @@ from esphome.const import CONF_ID
 
 def _load_erd_table():
     """Parse erd-definitions/appliance_api_erd_definitions.json from the submodule."""
-    json_path = Path(__file__).parent.parent.parent / "erd-definitions" / "appliance_api_erd_definitions.json"
+    repo_root = Path(__file__).parent.parent.parent
+    json_path = repo_root / "erd-definitions" / "appliance_api_erd_definitions.json"
+    if not json_path.exists():
+        try:
+            subprocess.run(
+                ["git", "submodule", "update", "--init", "erd-definitions"],
+                cwd=repo_root, check=True, capture_output=True,
+            )
+        except Exception:
+            pass
     if not json_path.exists():
         return {}
     with open(json_path) as f:
