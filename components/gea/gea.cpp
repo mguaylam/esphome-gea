@@ -8,6 +8,8 @@ namespace gea {
 
 static const char *const TAG = "gea";
 
+static std::string decode_erd_value(const std::vector<uint8_t> &data, const char *type_str);
+
 // =============================================================================
 // GEAEntity helpers
 // =============================================================================
