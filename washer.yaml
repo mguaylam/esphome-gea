@@ -92,7 +92,6 @@ gea:
   id: gea_hub
   uart_id: uart_gea
   src_address: 0xE4
-  resubscribe_interval: 60s
 
 # ---------------------------------------------------------------------------
 # Sensors (read-only)

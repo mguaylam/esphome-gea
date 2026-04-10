@@ -227,7 +227,6 @@ void GEAComponent::setup() {
     dest_addr_ = GEA_BROADCAST_ADDR;
   }
   send_subscribe_all_(0x00);  // type=add
-  last_subscribe_ms_ = millis();
 }
 
 void GEAComponent::dump_config() {
@@ -238,7 +237,6 @@ void GEAComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "  Dest address: 0x%02X", dest_addr_);
   }
   ESP_LOGCONFIG(TAG, "  Src address:  0x%02X", src_addr_);
-  ESP_LOGCONFIG(TAG, "  Resubscribe interval: %u ms", resubscribe_interval_);
   ESP_LOGCONFIG(TAG, "  Registered entities: %zu", entities_.size());
   for (auto *e : entities_) {
     ESP_LOGCONFIG(TAG, "    ERD 0x%04X", e->get_erd());
@@ -276,12 +274,16 @@ void GEAComponent::loop() {
              is_bus_connected() ? "CONNECTED" : "no valid packets yet");
   }
 
-  // Periodic re-subscribe: keeps entity state live if the appliance power-cycles.
-  uint32_t now = millis();
-  if (now - last_subscribe_ms_ >= resubscribe_interval_) {
-    last_subscribe_ms_ = now;
-    send_subscribe_all_(0x01);  // type=retain (keep-alive)
+  // Resubscribe on reconnection: detect the disconnected → connected transition
+  // and send a fresh subscribe-all. This recovers state when the cable is briefly
+  // interrupted without power-cycling the ESP.
+  bool connected = is_bus_connected();
+  if (connected && !was_connected_) {
+    ESP_LOGI(TAG, "Bus reconnected — sending subscribe-all");
+    send_subscribe_all_(0x00);  // type=add
   }
+  was_connected_ = connected;
+
 }
 
 // =============================================================================

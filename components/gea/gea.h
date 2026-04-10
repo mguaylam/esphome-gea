@@ -111,8 +111,6 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // dest_address is optional: if not called, auto-detect is used instead.
   void set_dest_address(uint8_t addr) { dest_addr_ = addr; auto_detect_ = false; }
   void set_src_address(uint8_t addr) { src_addr_ = addr; }
-  // How often to re-send subscribe_all to recover from appliance power-cycles.
-  void set_resubscribe_interval(uint32_t ms) { resubscribe_interval_ = ms; }
 
   // ---- Child entity registration ------------------------------------------
   void register_entity(GEAEntity *entity);
@@ -149,9 +147,6 @@ class GEAComponent : public uart::UARTDevice, public Component {
   bool auto_detect_{true};
   uint8_t dest_addr_{GEA_BROADCAST_ADDR};
   uint8_t src_addr_{0xBB};
-  // Periodic re-subscribe keeps entity state fresh if the appliance power-cycles.
-  uint32_t resubscribe_interval_{60000};
-  uint32_t last_subscribe_ms_{0};
 
   // RX state machine
   enum class RxState { IDLE, IN_PACKET, ESCAPE };
@@ -166,6 +161,9 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // Timestamp of the last successfully received packet (ms since boot, 0 = none).
   uint32_t last_rx_ms_{0};
+
+  // Tracks previous bus state to detect reconnection transitions.
+  bool was_connected_{true};
 
   // Raw byte counter — reported periodically so we can confirm UART is alive.
   uint32_t rx_byte_count_{0};

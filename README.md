@@ -122,7 +122,6 @@ gea:
   uart_id: uart_gea
   src_address: 0xE4        # Our bus address (default: 0xBB)
   # dest_address: 0xC0     # Optional; auto-detected if omitted
-  resubscribe_interval: 60s
 ```
 
 | Option | Default | Description |
@@ -130,7 +129,6 @@ gea:
 | `uart_id` | required | ID of the `uart:` block |
 | `src_address` | `0xBB` | Source address on the GEA bus |
 | `dest_address` | auto | Appliance address; detected from first packet if not set |
-| `resubscribe_interval` | `60s` | How often to re-send subscribe-all to keep state fresh |
 
 ---
 
@@ -311,6 +309,28 @@ GEA3 is a full-duplex serial protocol. Each frame has the following structure:
 | Publication | `0xA6` | ← Appliance | Broadcasts ERD changes |
 | Publication Ack | `0xA7` | → Appliance | Acknowledges publication |
 | ACK | `0xE1` | ↔ Both | Single-byte acknowledgement |
+
+---
+
+## Connection lifecycle
+
+On boot, the component sends a **subscribe-all** (`0xA4`) command. The appliance responds by publishing all supported ERDs, then continues to push updates whenever a value changes.
+
+If the GEA bus is interrupted (e.g. a loose cable) and comes back, the appliance loses the subscription and stops publishing. The component detects this automatically: after **30 seconds** without a valid packet the bus is considered disconnected, and a fresh subscribe-all is sent as soon as communication resumes.
+
+```
+Boot
+ └─ setup() sends subscribe-all
+     └─ appliance publishes all ERDs
+
+Cable disconnects (30 s silence)
+ └─ is_bus_connected() → false
+
+Cable reconnects
+ └─ first valid packet received
+     └─ loop() detects false → true transition
+         └─ sends subscribe-all again
+```
 
 ---
 

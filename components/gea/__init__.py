@@ -21,7 +21,6 @@ CONF_WRITE_ERD = "write_erd"
 CONF_DATA_SIZE = "data_size"
 CONF_DEST_ADDRESS = "dest_address"
 CONF_SRC_ADDRESS = "src_address"
-CONF_RESUBSCRIBE_INTERVAL = "resubscribe_interval"
 
 GeaDecodeType = gea_ns.enum("GeaDecodeType")
 
@@ -66,8 +65,6 @@ CONFIG_SCHEMA = cv.Schema(
         # single-appliance setups; the address is learned from the first valid packet).
         cv.Optional(CONF_DEST_ADDRESS): cv.hex_uint8_t,
         cv.Optional(CONF_SRC_ADDRESS, default=0xBB): cv.hex_uint8_t,
-        # How often to re-send subscribe_all so state recovers from appliance power-cycles.
-        cv.Optional(CONF_RESUBSCRIBE_INTERVAL, default="60s"): cv.update_interval,
     }
 ).extend(uart.UART_DEVICE_SCHEMA)
 
@@ -82,4 +79,3 @@ async def to_code(config):
     # else: auto_detect_ stays true, address is learned at runtime
 
     cg.add(var.set_src_address(config[CONF_SRC_ADDRESS]))
-    cg.add(var.set_resubscribe_interval(config[CONF_RESUBSCRIBE_INTERVAL]))

@@ -96,7 +96,6 @@ gea:
   # dest_address omitted — auto-detected from the first valid packet on the bus.
   # Set explicitly (e.g. dest_address: 0x24) to skip auto-detect.
   src_address: 0xE4  # matches geappliances/home-assistant-adapter default
-  resubscribe_interval: 60s  # re-send subscribe_all if appliance power-cycles
 
 # ---------------------------------------------------------------------------
 # Sensors (read-only) — ERDs discovered from PDP715SYV0FS dishwasher
