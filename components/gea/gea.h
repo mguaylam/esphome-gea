@@ -124,6 +124,11 @@ class GEAComponent : public uart::UARTDevice, public Component {
     return last_rx_ms_ != 0 && (millis() - last_rx_ms_) < 30000;
   }
 
+  // ---- Diagnostics — callable from YAML lambdas ---------------------------
+  // Logs all discovered ERDs at INFO level. Useful to call on api: on_client_connected
+  // so the list appears each time you open the console.
+  void log_erds() const;
+
  protected:
   // TX helpers
   void send_packet_(uint8_t dest, const std::vector<uint8_t> &payload);

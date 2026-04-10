@@ -4,3 +4,4 @@
 /.esphome/
 /secrets.yaml
 /.vscode/
+/components/gea/erd_table.h

@@ -1,4 +1,5 @@
 #include "gea.h"
+#include "erd_table.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 
@@ -251,6 +252,114 @@ void GEAComponent::dump_config() {
         hex += buf;
       }
       ESP_LOGCONFIG(TAG, "    0x%04X  (%zuB)  %s", kv.first, kv.second.size(), hex.c_str());
+    }
+  }
+}
+
+// Decode raw ERD bytes according to a GE type string (e.g. "u8", "u16/u8", "string").
+// Returns a human-readable string, or "" for unknown/raw types.
+static std::string decode_erd_value(const std::vector<uint8_t> &data, const char *type_str) {
+  if (type_str == nullptr || type_str[0] == '\0')
+    return "";
+
+  std::string result;
+  std::string ts(type_str);
+  size_t offset = 0;
+  size_t pos = 0;
+
+  while (pos <= ts.size()) {
+    size_t slash = ts.find('/', pos);
+    std::string field = ts.substr(pos, slash == std::string::npos ? std::string::npos : slash - pos);
+    pos = (slash == std::string::npos) ? ts.size() + 1 : slash + 1;
+
+    if (!result.empty()) result += "/";
+
+    char buf[32];
+    if (field == "u8" || field == "enum") {
+      if (offset < data.size()) {
+        snprintf(buf, sizeof(buf), "%u", data[offset++]);
+        result += buf;
+      }
+    } else if (field == "i8") {
+      if (offset < data.size()) {
+        snprintf(buf, sizeof(buf), "%d", (int8_t) data[offset++]);
+        result += buf;
+      }
+    } else if (field == "bool") {
+      if (offset < data.size())
+        result += data[offset++] ? "true" : "false";
+    } else if (field == "u16") {
+      if (offset + 2 <= data.size()) {
+        uint16_t v = ((uint16_t) data[offset] << 8) | data[offset + 1];
+        offset += 2;
+        snprintf(buf, sizeof(buf), "%u", v);
+        result += buf;
+      }
+    } else if (field == "i16") {
+      if (offset + 2 <= data.size()) {
+        int16_t v = (int16_t)(((uint16_t) data[offset] << 8) | data[offset + 1]);
+        offset += 2;
+        snprintf(buf, sizeof(buf), "%d", v);
+        result += buf;
+      }
+    } else if (field == "u32") {
+      if (offset + 4 <= data.size()) {
+        uint32_t v = ((uint32_t) data[offset] << 24) | ((uint32_t) data[offset + 1] << 16) |
+                     ((uint32_t) data[offset + 2] << 8) | data[offset + 3];
+        offset += 4;
+        snprintf(buf, sizeof(buf), "%u", v);
+        result += buf;
+      }
+    } else if (field == "i32") {
+      if (offset + 4 <= data.size()) {
+        int32_t v = (int32_t)(((uint32_t) data[offset] << 24) | ((uint32_t) data[offset + 1] << 16) |
+                              ((uint32_t) data[offset + 2] << 8) | data[offset + 3]);
+        offset += 4;
+        snprintf(buf, sizeof(buf), "%d", v);
+        result += buf;
+      }
+    } else if (field == "string") {
+      result += '"';
+      while (offset < data.size() && data[offset] != 0)
+        result += (char) data[offset++];
+      result += '"';
+    } else {
+      // raw or unknown — skip remainder
+      result += "raw";
+      break;
+    }
+  }
+  return result;
+}
+
+void GEAComponent::log_erds() const {
+  if (discovered_erds_.empty()) {
+    ESP_LOGI(TAG, "No ERDs discovered yet");
+    return;
+  }
+  ESP_LOGI(TAG, "Discovered ERDs (%zu):", discovered_erds_.size());
+  for (auto &kv : discovered_erds_) {
+    // Raw hex
+    std::string raw;
+    char buf[3];
+    for (uint8_t b : kv.second) {
+      snprintf(buf, sizeof(buf), "%02X", b);
+      raw += buf;
+    }
+
+    // Lookup in GE API table
+    const ErdTableEntry *info = erd_lookup(kv.first);
+    if (info == nullptr) {
+      ESP_LOGI(TAG, "  0x%04X  (unknown)  raw=%s", kv.first, raw.c_str());
+    } else {
+      std::string val = decode_erd_value(kv.second, info->type);
+      if (val.empty()) {
+        ESP_LOGI(TAG, "  0x%04X  %-40s  [%-20s]  %s  raw=%s",
+                 kv.first, info->name, info->type, info->ops, raw.c_str());
+      } else {
+        ESP_LOGI(TAG, "  0x%04X  %-40s  [%-20s]  %s  raw=%s  val=%s",
+                 kv.first, info->name, info->type, info->ops, raw.c_str(), val.c_str());
+      }
     }
   }
 }

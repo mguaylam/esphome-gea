@@ -1,7 +1,76 @@
+import json
+from pathlib import Path
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import uart
 from esphome.const import CONF_ID
+
+
+def _load_erd_table():
+    """Parse erd-definitions/appliance_api_erd_definitions.json from the submodule."""
+    json_path = Path(__file__).parent.parent.parent / "erd-definitions" / "appliance_api_erd_definitions.json"
+    if not json_path.exists():
+        return {}
+    with open(json_path) as f:
+        data = json.load(f)
+    table = {}
+    for erd in data.get("erds", []):
+        try:
+            erd_id = int(erd["id"], 16)
+        except (KeyError, ValueError):
+            continue
+        if erd_id > 0xFFFF:
+            continue
+        name = erd.get("name", "").replace("\\", "\\\\").replace('"', '\\"')
+        ops  = "|".join(erd.get("operations", []))
+        types = "/".join(f.get("type", "") for f in erd.get("data", []))
+        table[erd_id] = (name, types, ops)
+    return table
+
+
+def _write_erd_table_header(table):
+    """Write components/gea/erd_table.h with a sorted static lookup table."""
+    lines = [
+        "// Auto-generated from erd-definitions/appliance_api_erd_definitions.json",
+        "// Do not edit manually.",
+        "#pragma once",
+        "#include <stdint.h>",
+        "#include <stddef.h>",
+        "",
+        "namespace gea {",
+        "",
+        "struct ErdTableEntry {",
+        "  uint16_t id;",
+        "  const char *name;",
+        "  const char *type;",
+        "  const char *ops;",
+        "};",
+        "",
+        "static const ErdTableEntry ERD_TABLE[] = {",
+    ]
+    for erd_id, (name, types, ops) in sorted(table.items()):
+        lines.append(f'  {{0x{erd_id:04X}, "{name}", "{types}", "{ops}"}},')
+    lines += [
+        "};",
+        "",
+        "static const size_t ERD_TABLE_SIZE = sizeof(ERD_TABLE) / sizeof(ERD_TABLE[0]);",
+        "",
+        "static const ErdTableEntry *erd_lookup(uint16_t id) {",
+        "  size_t lo = 0, hi = ERD_TABLE_SIZE;",
+        "  while (lo < hi) {",
+        "    size_t mid = (lo + hi) / 2;",
+        "    if (ERD_TABLE[mid].id == id) return &ERD_TABLE[mid];",
+        "    if (ERD_TABLE[mid].id < id) lo = mid + 1;",
+        "    else hi = mid;",
+        "  }",
+        "  return nullptr;",
+        "}",
+        "",
+        "}  // namespace gea",
+    ]
+    out = Path(__file__).parent / "erd_table.h"
+    out.write_text("\n".join(lines) + "\n")
 
 DEPENDENCIES = ["uart"]
 AUTO_LOAD = []
@@ -70,6 +139,8 @@ CONFIG_SCHEMA = cv.Schema(
 
 
 async def to_code(config):
+    _write_erd_table_header(_load_erd_table())
+
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)

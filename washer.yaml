@@ -29,6 +29,8 @@ logger:
 api:
   encryption:
     key: !secret api_key
+  on_client_connected:
+    - lambda: id(gea_hub).log_erds();
 
 ota:
   - platform: esphome
