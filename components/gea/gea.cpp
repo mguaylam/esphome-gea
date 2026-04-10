@@ -245,13 +245,25 @@ void GEAComponent::dump_config() {
   if (!discovered_erds_.empty()) {
     ESP_LOGCONFIG(TAG, "  Discovered ERDs (%zu):", discovered_erds_.size());
     for (auto &kv : discovered_erds_) {
-      std::string hex = "0x";
+      std::string raw;
       char buf[3];
       for (uint8_t b : kv.second) {
         snprintf(buf, sizeof(buf), "%02X", b);
-        hex += buf;
+        raw += buf;
       }
-      ESP_LOGCONFIG(TAG, "    0x%04X  (%zuB)  %s", kv.first, kv.second.size(), hex.c_str());
+      const ErdTableEntry *info = erd_lookup(kv.first);
+      if (info == nullptr) {
+        ESP_LOGCONFIG(TAG, "    0x%04X  (unknown)  raw=%s", kv.first, raw.c_str());
+      } else {
+        std::string val = decode_erd_value(kv.second, info->type);
+        if (val.empty()) {
+          ESP_LOGCONFIG(TAG, "    0x%04X  %-40s  [%s]  raw=%s",
+                        kv.first, info->name, info->type, raw.c_str());
+        } else {
+          ESP_LOGCONFIG(TAG, "    0x%04X  %-40s  [%s]  raw=%s  val=%s",
+                        kv.first, info->name, info->type, raw.c_str(), val.c_str());
+        }
+      }
     }
   }
 }
