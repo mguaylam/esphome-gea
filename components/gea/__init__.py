@@ -136,12 +136,17 @@ CONFIG_SCHEMA = cv.Schema(
         # single-appliance setups; the address is learned from the first valid packet).
         cv.Optional(CONF_DEST_ADDRESS): cv.hex_uint8_t,
         cv.Optional(CONF_SRC_ADDRESS, default=0xBB): cv.hex_uint8_t,
+        # Set to true to embed the GE public ERD lookup table (~75 KB flash).
+        # Enables ERD name, type, and decoded value in dump_config output.
+        cv.Optional("erd_lookup", default=False): cv.boolean,
     }
 ).extend(uart.UART_DEVICE_SCHEMA)
 
 
 async def to_code(config):
-    _write_erd_table_header(_load_erd_table())
+    if config["erd_lookup"]:
+        _write_erd_table_header(_load_erd_table())
+        cg.add_build_flag("-DGEA_ERD_LOOKUP")
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)

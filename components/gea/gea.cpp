@@ -1,5 +1,7 @@
 #include "gea.h"
+#ifdef GEA_ERD_LOOKUP
 #include "erd_table.h"
+#endif
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 
@@ -8,7 +10,9 @@ namespace gea {
 
 static const char *const TAG = "gea";
 
+#ifdef GEA_ERD_LOOKUP
 static std::string decode_erd_value(const std::vector<uint8_t> &data, const char *type_str);
+#endif
 
 // =============================================================================
 // GEAEntity helpers
@@ -253,6 +257,7 @@ void GEAComponent::dump_config() {
         snprintf(buf, sizeof(buf), "%02X", b);
         raw += buf;
       }
+#ifdef GEA_ERD_LOOKUP
       const ErdTableEntry *info = erd_lookup(kv.first);
       if (info == nullptr) {
         ESP_LOGCONFIG(TAG, "    0x%04X  (unknown)  raw=%s", kv.first, raw.c_str());
@@ -266,12 +271,16 @@ void GEAComponent::dump_config() {
                         kv.first, info->name, info->type, raw.c_str(), val.c_str());
         }
       }
+#else
+      ESP_LOGCONFIG(TAG, "    0x%04X  (%zuB)  %s", kv.first, kv.second.size(), raw.c_str());
+#endif
     }
   }
 }
 
 // Decode raw ERD bytes according to a GE type string (e.g. "u8", "u16/u8", "string").
 // Returns a human-readable string, or "" for unknown/raw types.
+#ifdef GEA_ERD_LOOKUP
 static std::string decode_erd_value(const std::vector<uint8_t> &data, const char *type_str) {
   if (type_str == nullptr || type_str[0] == '\0')
     return "";
@@ -353,15 +362,12 @@ void GEAComponent::log_erds() const {
   }
   ESP_LOGI(TAG, "Discovered ERDs (%zu):", discovered_erds_.size());
   for (auto &kv : discovered_erds_) {
-    // Raw hex
     std::string raw;
     char buf[3];
     for (uint8_t b : kv.second) {
       snprintf(buf, sizeof(buf), "%02X", b);
       raw += buf;
     }
-
-    // Lookup in GE API table
     const ErdTableEntry *info = erd_lookup(kv.first);
     if (info == nullptr) {
       ESP_LOGI(TAG, "  0x%04X  (unknown)  raw=%s", kv.first, raw.c_str());
@@ -377,6 +383,7 @@ void GEAComponent::log_erds() const {
     }
   }
 }
+#endif  // GEA_ERD_LOOKUP
 
 void GEAComponent::loop() {
   // Drain all available RX bytes through the state machine.
