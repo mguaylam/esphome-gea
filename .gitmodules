@@ -1,0 +1,3 @@
+[submodule "erd-definitions"]
+	path = erd-definitions
+	url = https://github.com/geappliances/public-appliance-api-documentation.git
