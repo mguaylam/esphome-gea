@@ -38,6 +38,7 @@ def _write_erd_table_header(table):
         "#include <stdint.h>",
         "#include <stddef.h>",
         "",
+        "namespace esphome {",
         "namespace gea {",
         "",
         "struct ErdTableEntry {",
@@ -68,6 +69,7 @@ def _write_erd_table_header(table):
         "}",
         "",
         "}  // namespace gea",
+        "}  // namespace esphome",
     ]
     out = Path(__file__).parent / "erd_table.h"
     out.write_text("\n".join(lines) + "\n")
