@@ -170,6 +170,10 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // Tracks previous bus state to detect reconnection transitions.
   bool was_connected_{true};
 
+  // Timestamp of the last subscribe-all we sent (ms since boot, 0 = not yet sent).
+  // Used to throttle retries when the bus is silent.
+  uint32_t last_subscribe_ms_{0};
+
   // Raw byte counter — reported periodically so we can confirm UART is alive.
   uint32_t rx_byte_count_{0};
   uint32_t last_stats_ms_{0};

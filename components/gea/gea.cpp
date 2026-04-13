@@ -404,13 +404,21 @@ void GEAComponent::loop() {
              is_bus_connected() ? "CONNECTED" : "no valid packets yet");
   }
 
-  // Resubscribe on reconnection: detect the disconnected → connected transition
-  // and send a fresh subscribe-all. This recovers state when the cable is briefly
-  // interrupted without power-cycling the ESP.
+  // Resubscribe logic:
+  //  - On reconnection (false → true transition): cable was briefly interrupted.
+  //  - While silent (bus never connected or timed out): appliance may have reset and
+  //    dropped our subscription without sending anything. Retry every 30 s so we
+  //    recover from logical unsubscription without requiring a bus traffic event.
   bool connected = is_bus_connected();
+  uint32_t now_sub = millis();
   if (connected && !was_connected_) {
     ESP_LOGI(TAG, "Bus reconnected — sending subscribe-all");
-    send_subscribe_all_(0x00);  // type=add
+    send_subscribe_all_(0x00);
+    last_subscribe_ms_ = now_sub;
+  } else if (!connected && (now_sub - last_subscribe_ms_ >= 30000)) {
+    ESP_LOGD(TAG, "Bus silent — retrying subscribe-all");
+    send_subscribe_all_(0x00);
+    last_subscribe_ms_ = now_sub;
   }
   was_connected_ = connected;
 
