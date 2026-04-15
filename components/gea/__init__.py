@@ -4,8 +4,9 @@ from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
+from esphome import automation
 from esphome.components import uart
-from esphome.const import CONF_ID
+from esphome.const import CONF_ID, CONF_TRIGGER_ID
 
 
 def _load_erd_table():
@@ -91,6 +92,7 @@ MULTI_CONF = False
 
 gea_ns = cg.esphome_ns.namespace("gea")
 GEAComponent = gea_ns.class_("GEAComponent", cg.Component, uart.UARTDevice)
+ErdChangeTrigger = gea_ns.class_("ErdChangeTrigger", automation.Trigger.template())
 
 # Shared constants used by child platforms
 CONF_GEA_ID = "gea_id"
@@ -102,8 +104,17 @@ CONF_WRITE_ERD = "write_erd"
 CONF_DATA_SIZE = "data_size"
 CONF_DEST_ADDRESS = "dest_address"
 CONF_SRC_ADDRESS = "src_address"
+CONF_ON_ERD_CHANGE = "on_erd_change"
+CONF_EDGE = "edge"
 
 GeaDecodeType = gea_ns.enum("GeaDecodeType")
+
+ErdChangeEdge = ErdChangeTrigger.enum("Edge")
+EDGES = {
+    "rising": ErdChangeEdge.RISING,
+    "falling": ErdChangeEdge.FALLING,
+    "any": ErdChangeEdge.ANY,
+}
 
 DECODE_TYPES = {
     "uint8":     GeaDecodeType.UINT8,
@@ -149,6 +160,19 @@ CONFIG_SCHEMA = cv.Schema(
         # Set to true to embed the GE public ERD lookup table (~75 KB flash).
         # Enables ERD name, type, and decoded value in dump_config output.
         cv.Optional("erd_lookup", default=False): cv.boolean,
+        # Automation: fire on bitmask-edge transitions within an ERD publication.
+        # First publication after boot establishes a silent baseline (no trigger).
+        cv.Optional(CONF_ON_ERD_CHANGE): automation.validate_automation(
+            {
+                cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ErdChangeTrigger),
+                cv.Required(CONF_ERD): cv.hex_uint16_t,
+                cv.Optional(CONF_BYTE_OFFSET, default=0): cv.uint8_t,
+                cv.Optional(CONF_BITMASK, default=0xFF): cv.hex_uint8_t,
+                cv.Optional(CONF_EDGE, default="rising"): cv.one_of(
+                    *EDGES, lower=True
+                ),
+            }
+        ),
     }
 ).extend(uart.UART_DEVICE_SCHEMA)
 
@@ -167,3 +191,14 @@ async def to_code(config):
     # else: auto_detect_ stays true, address is learned at runtime
 
     cg.add(var.set_src_address(config[CONF_SRC_ADDRESS]))
+
+    for conf in config.get(CONF_ON_ERD_CHANGE, []):
+        trigger = cg.new_Pvariable(
+            conf[CONF_TRIGGER_ID],
+            var,
+            conf[CONF_ERD],
+            conf[CONF_BYTE_OFFSET],
+            conf[CONF_BITMASK],
+            EDGES[conf[CONF_EDGE]],
+        )
+        await automation.build_automation(trigger, [], conf)

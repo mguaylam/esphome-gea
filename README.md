@@ -26,6 +26,7 @@ An [ESPHome](https://esphome.io/) external component for monitoring and controll
   - [Text Sensor](#text-sensor-read-only)
   - [Button](#button-write-only)
   - [Number](#number-read-write)
+  - [Automation triggers](#automation-triggers)
 - [Protocol Overview](#protocol-overview)
 - [ERD Discovery](#erd-discovery)
 - [Examples](#examples)
@@ -41,7 +42,9 @@ An [ESPHome](https://esphome.io/) external component for monitoring and controll
 - **Resilient** — periodic re-subscription recovers state after appliance power cycles
 - **Flexible decoding** — 13 numeric types (`uint8`, `uint16_be`, `int32_le`, …), raw hex, ASCII strings, and enum option maps
 - **Multiple entity platforms** — sensor, binary sensor, switch, select, text sensor, button, number
+- **Edge-triggered automations** — `on_erd_change` fires on rising/falling/any bitmask transitions (great for stateless push notifications)
 - **Bus health indicator** — `is_bus_connected()` lambda for status LEDs
+- **Optional ERD lookup table** — embed the full GE ERD definition set for richer diagnostic logs (+75 KB flash)
 - **Native HA integration** — device classes, state classes, diagnostic categories all supported
 
 ---
@@ -129,6 +132,7 @@ gea:
 | `uart_id` | required | ID of the `uart:` block |
 | `src_address` | `0xBB` | Source address on the GEA bus |
 | `dest_address` | auto | Appliance address; detected from first packet if not set |
+| `erd_lookup` | `false` | If `true`, embed the public GE ERD definition set (~75 KB flash) so discovery logs include each ERD's documented name, type, and decoded value |
 
 ---
 
@@ -277,6 +281,49 @@ number:
     step: 1
     entity_category: diagnostic
 ```
+
+---
+
+### Automation triggers
+
+#### `on_erd_change`
+
+Fires when a specific bit or byte within an ERD's publication transitions across a configured edge. Defined on the `gea:` hub, not on a platform. Typical use case: appliance event flags (e.g. "wash complete", "detergent low") that the firmware pulses once and expects a consumer to act on.
+
+```yaml
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  on_erd_change:
+    - erd: 0x2154
+      byte_offset: 1
+      bitmask: 0x20
+      edge: rising
+      then:
+        - homeassistant.event:
+            event: esphome.washer_notification
+            data:
+              kind: wash_complete
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `erd` | required | ERD address to watch |
+| `byte_offset` | `0` | Byte index within the ERD payload |
+| `bitmask` | `0xFF` | Mask applied to the selected byte |
+| `edge` | `rising` | `rising`, `falling`, or `any` |
+
+**Semantics** (where `old` / `new` are the masked values):
+
+| Edge | Fires when |
+|------|------------|
+| `rising` | `old == 0 && new != 0` |
+| `falling` | `old != 0 && new == 0` |
+| `any` | `old != new` |
+
+> The first publication of an ERD after boot is a silent baseline — no trigger fires. This prevents spurious events when the ESP reboots mid-cycle.
+>
+> With a multi-bit mask the masked region is treated as a single aggregated flag ("at least one bit set"). For per-bit detection, define one trigger per bit.
 
 ---
 

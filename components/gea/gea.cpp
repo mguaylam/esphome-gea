@@ -633,8 +633,16 @@ void GEAComponent::dispatch_erd_(uint16_t erd, const std::vector<uint8_t> &data)
 }
 
 // Track discovered ERDs — log only on first appearance, update silently thereafter.
+// Also evaluates any on_erd_change triggers for this ERD (rising/falling/any edges
+// on masked bytes). First publication of each ERD after boot is treated as a silent
+// baseline — no triggers fire — so a mid-cycle reboot doesn't re-notify bits that
+// are already set.
 void GEAComponent::log_discovery_(uint16_t erd, const std::vector<uint8_t> &data) {
-  bool is_new = (discovered_erds_.find(erd) == discovered_erds_.end());
+  auto it = discovered_erds_.find(erd);
+  bool is_new = (it == discovered_erds_.end());
+  std::vector<uint8_t> old_data;
+  if (!is_new)
+    old_data = it->second;  // capture previous value before overwriting
   discovered_erds_[erd] = data;
 
   if (is_new) {
@@ -646,6 +654,14 @@ void GEAComponent::log_discovery_(uint16_t erd, const std::vector<uint8_t> &data
     }
     ESP_LOGI(TAG, "New ERD 0x%04X (%zu B): %s  [total discovered: %zu]",
              erd, data.size(), hex.c_str(), discovered_erds_.size());
+    return;  // baseline only — no triggers on first contact
+  }
+
+  // Evaluate registered on_erd_change triggers for this ERD.
+  for (auto *trig : erd_change_triggers_) {
+    if (trig->get_erd() == erd && trig->evaluate(old_data, data)) {
+      trig->trigger();
+    }
   }
 }
 

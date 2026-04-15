@@ -2,6 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
+#include "esphome/core/automation.h"
 #include "esphome/components/uart/uart.h"
 #include <string>
 #include <vector>
@@ -11,6 +12,8 @@
 
 namespace esphome {
 namespace gea {
+
+class ErdChangeTrigger;  // defined below GEAComponent
 
 // ---------------------------------------------------------------------------
 // GEA3 protocol framing constants
@@ -129,6 +132,11 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // so the list appears each time you open the console.
   void log_erds() const;
 
+  // ---- on_erd_change triggers (registered from Python codegen) ------------
+  void register_erd_change_trigger(ErdChangeTrigger *trigger) {
+    erd_change_triggers_.push_back(trigger);
+  }
+
  protected:
   // TX helpers
   void send_packet_(uint8_t dest, const std::vector<uint8_t> &payload);
@@ -181,6 +189,57 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // ERD discovery map: ERD address → most recently received data bytes.
   // Populated on first publication of each ERD; updated silently thereafter.
   std::map<uint16_t, std::vector<uint8_t>> discovered_erds_;
+
+  // User-configured on_erd_change triggers (see gea.on_erd_change in YAML).
+  std::vector<ErdChangeTrigger *> erd_change_triggers_;
+};
+
+// ---------------------------------------------------------------------------
+// ErdChangeTrigger — fires on ERD publication when a specified edge transition
+// occurs in data[byte_offset] masked by bitmask.  Self-registers with its
+// parent GEAComponent at construction.
+//
+// Semantics:
+//   rising  : (old & mask) == 0  &&  (new & mask) != 0
+//   falling : (old & mask) != 0  &&  (new & mask) == 0
+//   any     : (old & mask) != (new & mask)
+//
+// The first publication of an ERD after boot establishes a silent baseline
+// (no trigger fires), so reboots mid-cycle don't produce spurious events.
+// ---------------------------------------------------------------------------
+class ErdChangeTrigger : public Trigger<> {
+ public:
+  enum Edge : uint8_t { RISING = 0, FALLING = 1, ANY = 2 };
+
+  ErdChangeTrigger(GEAComponent *parent, uint16_t erd, uint8_t byte_offset,
+                   uint8_t bitmask, Edge edge)
+      : erd_(erd), byte_offset_(byte_offset), bitmask_(bitmask), edge_(edge) {
+    parent->register_erd_change_trigger(this);
+  }
+
+  uint16_t get_erd() const { return erd_; }
+
+  // Returns true if the configured edge condition is met between old and new.
+  // Caller must ensure old_data is non-empty (no first-seen evaluation).
+  bool evaluate(const std::vector<uint8_t> &old_data,
+                const std::vector<uint8_t> &new_data) const {
+    if (byte_offset_ >= new_data.size() || byte_offset_ >= old_data.size())
+      return false;
+    uint8_t old_masked = old_data[byte_offset_] & bitmask_;
+    uint8_t new_masked = new_data[byte_offset_] & bitmask_;
+    switch (edge_) {
+      case RISING:  return old_masked == 0 && new_masked != 0;
+      case FALLING: return old_masked != 0 && new_masked == 0;
+      case ANY:     return old_masked != new_masked;
+    }
+    return false;
+  }
+
+ protected:
+  uint16_t erd_;
+  uint8_t byte_offset_;
+  uint8_t bitmask_;
+  Edge edge_;
 };
 
 }  // namespace gea
