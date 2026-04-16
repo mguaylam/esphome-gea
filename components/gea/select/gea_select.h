@@ -24,10 +24,7 @@ class GEASelect : public select::Select, public GEAEntity, public Component {
     if (it != options_.end()) {
       publish_state(it->second);
     } else {
-      // Unknown value — publish as hex for visibility.
-      char buf[16];
-      snprintf(buf, sizeof(buf), "0x%02X", (unsigned) key);
-      publish_state(std::string(buf));
+      ESP_LOGD("gea.select", "Unmapped value 0x%02X for ERD 0x%04X — ignoring", (unsigned) key, erd_);
     }
   }
 
