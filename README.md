@@ -6,9 +6,7 @@
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-compatible-41bdf5?logo=home-assistant)](https://www.home-assistant.io/)
 [![ESP32](https://img.shields.io/badge/ESP32-supported-red?logo=espressif)](https://www.espressif.com/)
 
-An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances via the **GEA3 serial protocol**. Integrates natively with [Home Assistant](https://www.home-assistant.io/) — no cloud, no MQTT, no proprietary app required.
-
-> Tested with a GE PDP715SYV0FS dishwasher and a GE PFQ97HSPVDS washer/dryer combo.
+An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances via the **GEA3 serial bus**, with native [Home Assistant](https://www.home-assistant.io/) integration.
 
 ---
 
@@ -27,14 +25,15 @@ An [ESPHome](https://esphome.io/) external component for monitoring and controll
   - [Button](#button-write-only)
   - [Number](#number-read-write)
   - [Automation triggers](#automation-triggers)
-- [Protocol Overview](#protocol-overview)
 - [ERD Discovery](#erd-discovery)
-- [Examples](#examples)
+- [Devices](#devices)
 - [License](#license)
 
 ---
 
 ## Features
+
+GE appliances expose their state through **ERDs** (Entity Reference Designators) — 16-bit registers for data like temperatures, cycle states, and settings. This component maps those registers to Home Assistant entities.
 
 - **Full bidirectional control** — read sensor values, toggle switches, change cycle settings, trigger remote start/stop
 - **Auto-discovery** — subscribes to all ERDs on boot; unknown registers are logged for reverse-engineering
@@ -42,7 +41,7 @@ An [ESPHome](https://esphome.io/) external component for monitoring and controll
 - **Resilient** — periodic re-subscription recovers state after appliance power cycles
 - **Flexible decoding** — 13 numeric types (`uint8`, `uint16_be`, `int32_le`, …), raw hex, ASCII strings, and enum option maps
 - **Multiple entity platforms** — sensor, binary sensor, switch, select, text sensor, button, number
-- **Edge-triggered automations** — `on_erd_change` fires on rising/falling/any bitmask transitions (great for stateless push notifications)
+- **Edge-triggered automations** — `on_erd_change` fires on rising/falling/any bitmask transitions
 - **Bus health indicator** — `is_bus_connected()` lambda for status LEDs
 - **Optional ERD lookup table** — embed the full GE ERD definition set for richer diagnostic logs (+75 KB flash)
 - **Native HA integration** — device classes, state classes, diagnostic categories all supported
@@ -56,27 +55,26 @@ An [ESPHome](https://esphome.io/) external component for monitoring and controll
 | Part | Notes |
 |------|-------|
 | [Seeed XIAO ESP32-C3](https://wiki.seeedstudio.com/XIAO_ESP32C3_Getting_Started/) | Compact, 3.3 V, native USB |
-| FirstBuild GEA adapter | RJ45 breakout, LEDs, and supporting components all included |
+| FirstBuild GEA adapter | 8P8C breakout, LEDs, and supporting components all included |
 
 ### Wiring
 
-```
-   XIAO ESP32-C3                 GE Appliance
-   ┌─────────────┐               ┌──────────────────┐
-   │             │               │                  │
-   │  D6 (TX) ──────────────────── GEA3 RX          │
-   │  D7 (RX) ──────────────────── GEA3 TX          │
-   │       GND ──────────────────── GND             │
-   │       3V3 ──────────────────── 3.3V (optional) │
-   │             │               │                  │
-   │  D0 ─── [LED] ─── GND      └──────────────────┘
-   │  D1 ─── [LED] ─── GND         (via RJ45 breakout)
-   │  D2 ─── [LED] ─── GND
-   └─────────────┘
-     Heartbeat / Wi-Fi / Bus
-```
+| XIAO ESP32-C3    |   | GE Appliance      |
+|------------------|---|-------------------|
+| D6 (TX / GPIO21) | → | GEA3 RX           |
+| D7 (RX / GPIO20) | ← | GEA3 TX           |
+| GND              | ↔ | GND               |
+| 3V3              | → | 3.3V (optional)   |
 
-> The GEA3 connector on GE appliances is typically accessible behind the appliance's service panel via an RJ45 jack. The FirstBuild breakout board makes this simple to tap into.
+The FirstBuild adapter also connects three status LEDs:
+
+| Pin | Function |
+|-----|----------|
+| D0 | Heartbeat |
+| D1 | Wi-Fi status |
+| D2 | Bus status |
+
+> The GEA3 connector on GE appliances is typically accessible behind the appliance's service panel via an 8P8C jack. The FirstBuild breakout board makes this simple to tap into.
 
 ### UART Settings
 
@@ -327,7 +325,8 @@ gea:
 
 ---
 
-## Protocol Overview
+<details>
+<summary><strong>Protocol Overview</strong></summary>
 
 GEA3 is a full-duplex serial protocol. Each frame has the following structure:
 
@@ -357,9 +356,12 @@ GEA3 is a full-duplex serial protocol. Each frame has the following structure:
 | Publication Ack | `0xA7` | → Appliance | Acknowledges publication |
 | ACK | `0xE1` | ↔ Both | Single-byte acknowledgement |
 
+</details>
+
 ---
 
-## Connection lifecycle
+<details>
+<summary><strong>Connection lifecycle</strong></summary>
 
 On boot, the component sends a **subscribe-all** (`0xA4`) command. The appliance responds by publishing all supported ERDs, then continues to push updates whenever a value changes.
 
@@ -379,6 +381,8 @@ Cable reconnects
          └─ sends subscribe-all again
 ```
 
+</details>
+
 ---
 
 ## ERD Discovery
@@ -396,14 +400,14 @@ You can add these to your configuration as raw `text_sensor` entities to start r
 
 ---
 
-## Examples
+## Devices
 
-Complete working configurations are included for two appliances:
+Complete configurations for supported appliances:
 
 | File | Appliance | Highlights |
 |------|-----------|------------|
-| [`PDP715SYV0FS.yaml`](examples/dishwasher/PDP715SYV0FS.yaml) | GE PDP715SYV0FS | Cycle selection, elapsed time, ASCII cycle name, model retrieval button |
-| [`PFQ97HSPVDS.yaml`](examples/washer/PFQ97HSPVDS.yaml) | GE PFQ97HSPVDS (Ultrafast Combo) | Time remaining, door/lock/pump sensors, 200+ cycle options, remote start/stop, detergent/softener dosing |
+| [`PDP715SYV0FS.yaml`](devices/dishwasher/PDP715SYV0FS.yaml) | GE PDP715SYV0FS | Cycle selection, elapsed time, ASCII cycle name, model retrieval button |
+| [`PFQ97HSPVDS.yaml`](devices/washer/PFQ97HSPVDS.yaml) | GE PFQ97HSPVDS (Ultrafast Combo) | Time remaining, door/lock/pump sensors, 200+ cycle options, remote start/stop, detergent/softener dosing |
 
 ---
 

@@ -14,8 +14,8 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - examples/dishwasher/PDP715SYV0FS.yaml
-          - examples/washer/PFQ97HSPVDS.yaml
+          - devices/dishwasher/PDP715SYV0FS.yaml
+          - devices/washer/PFQ97HSPVDS.yaml
 
     steps:
       - uses: actions/checkout@v4
