@@ -354,6 +354,7 @@ GEA3 is a full-duplex serial protocol. Each frame has the following structure:
 | Subscribe-All Ack | `0xA5` | ← Appliance | Confirms subscription |
 | Publication | `0xA6` | ← Appliance | Broadcasts ERD changes |
 | Publication Ack | `0xA7` | → Appliance | Acknowledges publication |
+| Subscription Host Startup | `0xA8` | ← Appliance | Announces appliance just came online |
 | ACK | `0xE1` | ↔ Both | Single-byte acknowledgement |
 
 </details>
@@ -363,23 +364,19 @@ GEA3 is a full-duplex serial protocol. Each frame has the following structure:
 <details>
 <summary><strong>Connection lifecycle</strong></summary>
 
-On boot, the component sends a **subscribe-all** (`0xA4`) command. The appliance responds by publishing all supported ERDs, then continues to push updates whenever a value changes.
+The component uses a two-state subscription machine:
 
-If the GEA bus is interrupted (e.g. a loose cable) and comes back, the appliance loses the subscription and stops publishing. The component detects this automatically: after **30 seconds** without a valid packet the bus is considered disconnected, and a fresh subscribe-all is sent as soon as communication resumes.
+| State | Behaviour |
+| ----- | --------- |
+| **SUBSCRIBING** | Sends subscribe-all `type=0x00` every **1 s** until the appliance acknowledges |
+| **SUBSCRIBED** | Sends subscribe-all `type=0x01` (retain) every **30 s** as a keep-alive |
 
-```
-Boot
- └─ setup() sends subscribe-all
-     └─ appliance publishes all ERDs
+The keep-alive is required because the appliance silently drops subscriptions after a few minutes even when the bus remains physically connected.
 
-Cable disconnects (30 s silence)
- └─ is_bus_connected() → false
+Transition back to SUBSCRIBING happens on two triggers:
 
-Cable reconnects
- └─ first valid packet received
-     └─ loop() detects false → true transition
-         └─ sends subscribe-all again
-```
+- **Primary:** a `0xA8` "subscription host startup" packet received from the appliance — fires immediately when the appliance broadcasts its boot announcement.
+- **Fallback:** a bus silent → active transition, detected when `is_bus_connected()` goes from `false` to `true`. Covers cases where the startup packet is missed.
 
 </details>
 
@@ -391,7 +388,7 @@ Cable reconnects
 
 On boot the component sends a subscribe-all command. The appliance responds by publishing all supported ERDs. Any ERD not matched to a configured entity is logged at `INFO` level:
 
-```
+```text
 [I][gea:042]: Discovered ERD 0x2007: 00 00
 [I][gea:042]: Discovered ERD 0x200A: 00 00 00 00
 ```

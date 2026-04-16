@@ -36,6 +36,7 @@ static constexpr uint8_t CMD_SUB_ALL_REQUEST = 0xA4;  // subscribe-all (triggers
 static constexpr uint8_t CMD_SUB_ALL_RESPONSE = 0xA5;
 static constexpr uint8_t CMD_PUBLICATION     = 0xA6;  // appliance broadcasts all ERD values
 static constexpr uint8_t CMD_PUB_ACK         = 0xA7;  // publication acknowledgement
+static constexpr uint8_t CMD_SUB_HOST_STARTUP = 0xA8;  // appliance announces it just came online
 
 // ---------------------------------------------------------------------------
 // Decode types for ERD data interpretation
@@ -164,6 +165,12 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // RX state machine
   enum class RxState { IDLE, IN_PACKET, ESCAPE };
   RxState rx_state_{RxState::IDLE};
+
+  // Subscription state machine:
+  //   SUBSCRIBING — retrying subscribe-all until the appliance acknowledges.
+  //   SUBSCRIBED  — subscription active; retained periodically.
+  enum class SubState { SUBSCRIBING, SUBSCRIBED };
+  SubState sub_state_{SubState::SUBSCRIBING};
   std::vector<uint8_t> rx_buf_;
 
   // Entity registry
@@ -175,12 +182,12 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // Timestamp of the last successfully received packet (ms since boot, 0 = none).
   uint32_t last_rx_ms_{0};
 
-  // Tracks previous bus state to detect reconnection transitions.
-  bool was_connected_{true};
+  // Tracks previous bus state to detect appliance reconnection.
+  bool was_connected_{false};
 
-  // Timestamp of the last subscribe-all we sent (ms since boot, 0 = not yet sent).
-  // Used to throttle retries when the bus is silent.
-  uint32_t last_subscribe_ms_{0};
+  // Timestamp of the last subscribe-all sent. Used to pace retries (SUBSCRIBING)
+  // and keep-alive sends (SUBSCRIBED).
+  uint32_t sub_retry_ms_{0};
 
   // Raw byte counter — reported periodically so we can confirm UART is alive.
   uint32_t rx_byte_count_{0};

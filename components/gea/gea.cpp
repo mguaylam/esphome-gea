@@ -234,7 +234,7 @@ void GEAComponent::setup() {
     dest_addr_ = GEA_BROADCAST_ADDR;
   }
   send_subscribe_all_(0x00);  // type=add
-  last_subscribe_ms_ = millis();
+  sub_retry_ms_ = millis();
 }
 
 void GEAComponent::dump_config() {
@@ -405,31 +405,35 @@ void GEAComponent::loop() {
              is_bus_connected() ? "CONNECTED" : "no valid packets yet");
   }
 
-  // Resubscribe logic:
-  //  - On reconnection (false → true transition): cable was briefly interrupted.
-  //  - While silent (bus never connected or timed out): appliance may have reset and
-  //    dropped our subscription without sending anything. Retry every 30 s so we
-  //    recover from logical unsubscription without requiring a bus traffic event.
-  //  - Periodic retain (type=0x01) every 30 s while connected: without this the
-  //    appliance main board silently drops our subscription after a few minutes
-  //    and stops publishing state updates, even though voluntary broadcasts from
-  //    other nodes keep the bus "connected".
+  // Subscription state machine:
+  //   SUBSCRIBING: send subscribe-all (type=add) every 1 s until acknowledged.
+  //   SUBSCRIBED:  send subscribe-all (type=retain) every 30 s as keep-alive.
+  //
+  // Primary reconnection trigger is the 0xA8 "subscription host startup"
+  // packet the appliance emits on boot (see process_packet_).  As a fallback
+  // for cases where that packet is missed or the bus stays connected via
+  // other traffic, we also resubscribe on a bus silent→active transition.
   bool connected = is_bus_connected();
   uint32_t now_sub = millis();
-  if (connected && !was_connected_) {
-    ESP_LOGI(TAG, "Bus reconnected — sending subscribe-all");
-    send_subscribe_all_(0x00);
-    last_subscribe_ms_ = now_sub;
-  } else if (!connected && (now_sub - last_subscribe_ms_ >= 30000)) {
-    ESP_LOGD(TAG, "Bus silent — retrying subscribe-all");
-    send_subscribe_all_(0x00);
-    last_subscribe_ms_ = now_sub;
-  } else if (connected && (now_sub - last_subscribe_ms_ >= 30000)) {
-    ESP_LOGV(TAG, "Subscription keep-alive (retain)");
-    send_subscribe_all_(0x01);
-    last_subscribe_ms_ = now_sub;
+  if (sub_state_ == SubState::SUBSCRIBED && !was_connected_ && connected) {
+    ESP_LOGI(TAG, "Bus reconnected — resubscribing");
+    sub_state_ = SubState::SUBSCRIBING;
+    sub_retry_ms_ = now_sub - 1000;  // trigger immediate retry on next pass
   }
   was_connected_ = connected;
+
+  if (sub_state_ == SubState::SUBSCRIBING) {
+    if (now_sub - sub_retry_ms_ >= 1000) {
+      send_subscribe_all_(0x00);
+      sub_retry_ms_ = now_sub;
+    }
+  } else {
+    if (now_sub - sub_retry_ms_ >= 30000) {
+      ESP_LOGV(TAG, "Subscription keep-alive (retain)");
+      send_subscribe_all_(0x01);
+      sub_retry_ms_ = now_sub;
+    }
+  }
 
 }
 
@@ -587,13 +591,31 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
       break;
     }
 
+    case CMD_SUB_HOST_STARTUP: {
+      // Appliance announces it just came online. Payload is the single CMD byte
+      // (total wire size = 3 header + 1 payload + 2 CRC = 6). Any prior
+      // subscription is gone; drop back to SUBSCRIBING to re-add immediately.
+      if (pkt.size() != 6)
+        break;
+      if (sub_state_ == SubState::SUBSCRIBED) {
+        ESP_LOGI(TAG, "Appliance startup (0xA8) — resubscribing");
+        sub_state_ = SubState::SUBSCRIBING;
+        sub_retry_ms_ = millis() - 1000;  // trigger immediate retry next loop
+      }
+      break;
+    }
+
     case CMD_SUB_ALL_RESPONSE: {
       // [CMD][req_id][result]
       if (pkt.size() < 6)
         break;
       uint8_t result = pkt[5];
       if (result == 0x00) {
-        ESP_LOGD(TAG, "Subscribe-all accepted; waiting for publications...");
+        if (sub_state_ == SubState::SUBSCRIBING) {
+          ESP_LOGI(TAG, "Subscribed — waiting for publications");
+          sub_state_ = SubState::SUBSCRIBED;
+          sub_retry_ms_ = millis();
+        }
       } else {
         ESP_LOGW(TAG, "Subscribe-all rejected, result=0x%02X", result);
       }
