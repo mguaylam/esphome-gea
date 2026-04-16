@@ -1,14 +1,13 @@
-# ESPHome config for a GE dishwasher via GEA3 protocol
+# ESPHome config for a GE Profile dishwasher via GEA3 protocol
+# Appliance: GE Profile PDP715SYV0FS
 # Hardware: Seeed XIAO ESP32-C3 on the FirstBuild carrier board (RJ45 breakout)
-# Framework: Arduino (same as original geappliances/home-assistant-adapter firmware)
-# Baud rate: 230400 (GEA3) — 19200 is GEA2 only
-# TX = GPIO21 (D6), RX = GPIO20 (D7) — confirmed from carrier board schematic (J103/J105 pin 7)
+# Framework: ESP-IDF
+# Baud rate: 230400 (GEA3)
+# TX = GPIO21 (D6), RX = GPIO20 (D7)
 
 esphome:
   name: ge-dishwasher
-  friendly_name: GE Dishwasher
-  # These populate the HA device info panel (Manufacturer / Model / Version).
-  # project.name → shown as "Model" in HA; project.version → "SW Version".
+  friendly_name: Lave-vaisselle GE Profile
   project:
     name: GE.PDP715SYV0FS
     version: "1.0.0"
@@ -47,13 +46,10 @@ wifi:
     - output.turn_off: led_wifi
 
 # ---------------------------------------------------------------------------
-# Status LEDs — matches the original GE home-assistant-adapter carrier board
-#   D0 (GPIO2): system heartbeat  — blinks while connecting, solid when fully OK
-#   D1 (GPIO3): Wi-Fi connected   — solid on
-#   D2 (GPIO4): GEA bus connected — solid when appliance is responding
+# Status LEDs
 # ---------------------------------------------------------------------------
 status_led:
-  pin: GPIO2   # D0 — handled entirely by ESPHome (fast blink=error, slow=degraded, off=OK)
+  pin: GPIO2
 
 output:
   - platform: gpio
@@ -79,8 +75,8 @@ interval:
 # ---------------------------------------------------------------------------
 uart:
   id: uart_gea
-  tx_pin: GPIO21   # D6 (confirmed from carrier board schematic: J103 pin 7 → M_GEA3_TX)
-  rx_pin: GPIO20   # D7 (confirmed from carrier board schematic: J105 pin 7 → M_GEA3_RX)
+  tx_pin: GPIO21
+  rx_pin: GPIO20
   baud_rate: 230400
   data_bits: 8
   stop_bits: 1
@@ -93,175 +89,559 @@ uart:
 gea:
   id: gea_hub
   uart_id: uart_gea
-  # dest_address omitted — auto-detected from the first valid packet on the bus.
-  # Set explicitly (e.g. dest_address: 0x24) to skip auto-detect.
-  src_address: 0xE4  # matches geappliances/home-assistant-adapter default
+  src_address: 0xE4
   erd_lookup: true
 
 # ---------------------------------------------------------------------------
-# Sensors (read-only) — ERDs discovered from PDP715SYV0FS dishwasher
+# Sensors (numeric read-only)
 # ---------------------------------------------------------------------------
 sensor:
-  # Elapsed time counter — total_increasing so HA tracks it correctly in history
+  # Water temperature — uint8 Fahrenheit; sentinel 75 (0x4B) = unknown, drop.
   - platform: gea
     gea_id: gea_hub
-    name: "Elapsed Time"
-    erd: 0x0702
-    unit_of_measurement: s
-    accuracy_decimals: 0
-    decode: uint32_be
-    icon: mdi:timer-outline
-    state_class: total_increasing
-
-  # Machine state (e.g. 0x02 = idle) — diagnostic, not shown on main dashboard
-  - platform: gea
-    gea_id: gea_hub
-    name: "Machine State"
-    erd: 0x3001
-    accuracy_decimals: 0
+    name: "Température eau"
+    erd: 0x3035
     decode: uint8
-    entity_category: diagnostic
+    device_class: temperature
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    icon: mdi:thermometer-water
+    filters:
+      - lambda: |-
+          if (x == 75.0f) return {};
+          return (x - 32.0f) * 5.0f / 9.0f;
 
-  # Per-cycle value (varies per cycle selection) — diagnostic
+  # Cycle time remaining (minutes)
   - platform: gea
     gea_id: gea_hub
-    name: "Cycle Parameter"
+    name: "Temps restant"
     erd: 0xD004
-    accuracy_decimals: 0
     decode: uint16_be
-    entity_category: diagnostic
+    device_class: duration
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    icon: mdi:timer
 
-  # Unknown 2-byte value (0x0009 / 0x000A observed) — diagnostic
+  # Delay-start remaining (minutes)
   - platform: gea
     gea_id: gea_hub
-    name: "ERD 0x3084"
+    name: "Délai restant"
+    erd: 0x300D
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    icon: mdi:clock-start
+
+  # Cycles started counter (bytes 0-1 of 0x3009)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycles démarrés"
+    erd: 0x3009
+    decode: uint16_be
+    byte_offset: 0
+    accuracy_decimals: 0
+    state_class: total_increasing
+    icon: mdi:counter
+    entity_category: diagnostic
+
+  # Cycles completed counter (bytes 2-3 of 0x3009)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycles complétés"
+    erd: 0x3009
+    decode: uint16_be
+    byte_offset: 2
+    accuracy_decimals: 0
+    state_class: total_increasing
+    icon: mdi:counter
+    entity_category: diagnostic
+
+  # Door open counter
+  - platform: gea
+    gea_id: gea_hub
+    name: "Ouvertures porte"
+    erd: 0x3006
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    icon: mdi:door
+    entity_category: diagnostic
+
+  # Detergent dispense counter
+  - platform: gea
+    gea_id: gea_hub
+    name: "Distributions"
+    erd: 0x301E
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    icon: mdi:chart-bubble
+    entity_category: diagnostic
+
+  # Average turbidity (NTU) — sentinel 1000 = unknown, drop.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Turbidité"
+    erd: 0x3036
+    decode: uint16_be
+    unit_of_measurement: "NTU"
+    accuracy_decimals: 0
+    icon: mdi:water-opacity
+    entity_category: diagnostic
+    filters:
+      - lambda: |-
+          if (x == 1000.0f) return {};
+          return x;
+
+  # Tub water level (signed mmH2O)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Niveau eau"
     erd: 0x3084
+    decode: int16_be
+    unit_of_measurement: "mmH₂O"
     accuracy_decimals: 0
-    decode: uint16_be
+    icon: mdi:water
     entity_category: diagnostic
 
-  # Unknown 2-byte value (0x0000 / 0x0008 / 0x0009 observed) — diagnostic
+  # Circulation pump speed (%)
   - platform: gea
     gea_id: gea_hub
-    name: "ERD 0x3107"
+    name: "Pompe circulation"
+    erd: 0x3045
+    decode: uint8
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: mdi:pump
+    entity_category: diagnostic
+
+  # Drain pump speed (%)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Pompe vidange"
+    erd: 0x303E
+    decode: uint8
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: mdi:pump
+    entity_category: diagnostic
+
+  # Currently selected cycle index (matches the Cycle select)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Index cycle"
+    erd: 0x321B
+    decode: uint8
+    accuracy_decimals: 0
+    icon: mdi:format-list-numbered
+    entity_category: diagnostic
+
+  # AC voltage
+  - platform: gea
+    gea_id: gea_hub
+    name: "Tension AC"
     erd: 0x3107
-    accuracy_decimals: 0
     decode: uint16_be
+    device_class: voltage
+    unit_of_measurement: "V"
+    accuracy_decimals: 0
+    icon: mdi:flash
     entity_category: diagnostic
 
 # ---------------------------------------------------------------------------
-# Number (read-write numeric ERDs — updates from bus AND writable from HA)
+# Text sensors (enum labels / ASCII)
 # ---------------------------------------------------------------------------
-number:
-  # Cycle parameter — writable numeric value
+text_sensor:
+  # Operating mode
   - platform: gea
     gea_id: gea_hub
-    name: "Cycle Parameter Control"
-    erd: 0xD004
-    decode: uint16_be
-    min_value: 0
-    max_value: 65535
-    step: 1
+    name: "Mode"
+    erd: 0x3001
+    decode: uint8
+    icon: mdi:dishwasher
+    options:
+      0x00: "Basse consommation"
+      0x01: "Démarrage"
+      0x02: "En attente"
+      0x03: "Départ différé"
+      0x04: "Pause"
+      0x05: "En marche"
+      0x06: "Fin de cycle"
+      0x07: "Mode téléchargement"
+      0x08: "Mode vérification capteur"
+      0x09: "Mode activation charge"
+      0x0B: "Mode MC seulement"
+      0x0C: "Mode alerte utilisateur"
+      0x0D: "Verrouillé"
+      0x0E: "CSM"
+      0x0F: "Jumelage Wi-Fi"
+      0x10: "Sélection niveau agent de rinçage"
+      0x11: "Mode Sabbat"
+      0x12: "Pause différée"
+
+  # Cycle step indication
+  - platform: gea
+    gea_id: gea_hub
+    name: "Étape"
+    erd: 0x300E
+    decode: uint8
+    icon: mdi:dishwasher
+    options:
+      0x00: "Pas de changement"
+      0x01: "Prélavage"
+      0x02: "Détection"
+      0x03: "Lavage principal"
+      0x04: "Séchage"
+      0x05: "Désinfection"
+      0x06: "Calibration turbidité"
+      0x07: "Calibration déflecteur"
+      0x08: "Pause"
+      0x09: "Rinçage"
+      0x0A: "Prélavage 1"
+      0x0B: "Rinçage final"
+      0x0C: "Fin prélavage 1"
+      0x0D: "Démarrage chaud auto 1"
+      0x0E: "Démarrage chaud auto 2"
+      0x0F: "Démarrage chaud auto 3"
+      0x10: "Remplissage rinçage final"
+      0x11: "Inactif"
+      0x12: "Fin de cycle"
+
+  # Selected cycle name — first 10 ASCII bytes of 0x301C, space-trimmed,
+  # mapped from the appliance's English labels to French.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Nom du cycle"
+    erd: 0x301C
+    decode: ascii
+    icon: mdi:washing-machine
+    filters:
+      - lambda: |-
+          std::string n = x.substr(0, std::min(x.size(), (size_t)10));
+          while (!n.empty() && (n.back() == ' ' || n.back() == '\0')) n.pop_back();
+          if (n == "Rinse") return std::string("Rinçage");
+          if (n == "AutoSense") return std::string("AutoSense");
+          if (n == "Normal") return std::string("Normal");
+          if (n == "Heavy") return std::string("Intensif");
+          if (n == "1 Hr Wash") return std::string("Lavage 1h");
+          if (n == "Cascade P+") return std::string("Cascade Platinum Plus");
+          return n;
+
+  # Active sub-cycle name — bytes 10-19 of 0x301C. "Inactif" if absent
+  # or identical to the main cycle name.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Sous-cycle"
+    erd: 0x301C
+    decode: ascii
+    icon: mdi:washing-machine
+    filters:
+      - lambda: |-
+          if (x.size() < 11) return std::string("Inactif");
+          std::string cycle = x.substr(0, 10);
+          std::string sub = x.substr(10, std::min(x.size() - 10, (size_t)10));
+          while (!cycle.empty() && (cycle.back() == ' ' || cycle.back() == '\0')) cycle.pop_back();
+          while (!sub.empty() && (sub.back() == ' ' || sub.back() == '\0')) sub.pop_back();
+          if (sub.empty() || sub == cycle) return std::string("Inactif");
+          if (sub == "Prewash") return std::string("Prélavage");
+          if (sub == "Sensing") return std::string("Détection");
+          if (sub == "Main Wash") return std::string("Lavage");
+          if (sub == "Drying") return std::string("Séchage");
+          if (sub == "FinalRinse") return std::string("Rinçage final");
+          return sub;
+
+  # Diverter position
+  - platform: gea
+    gea_id: gea_hub
+    name: "Déflecteur"
+    erd: 0x303A
+    decode: uint8
+    icon: mdi:valve
     entity_category: diagnostic
+    options:
+      0x00: "Bas principal"
+      0x01: "Milieu/Haut"
+      0x02: "Bas inversé"
+      0x03: "Jets ustensiles"
+      0x04: "Inconnu/Transition"
+
+  # Wash temperature setting (mirrors the select below)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Temp. lavage"
+    erd: 0x321C
+    decode: uint8
+    icon: mdi:thermometer
+    options:
+      0x00: "Aucun"
+      0x01: "Boost"
+      0x02: "Désinfection"
+      0x03: "Désinfection + Boost"
+
+  # Heated dry setting (mirrors the select below)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Séchage"
+    erd: 0x321D
+    decode: uint8
+    icon: mdi:hair-dryer
+    options:
+      0x00: "Aucun"
+      0x01: "Chaleur ajoutée"
+      0x02: "Séchage maximum"
+
+  # Wash zone setting (mirrors the select below)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Zone de lavage"
+    erd: 0x321E
+    decode: uint8
+    icon: mdi:layers
+    options:
+      0x00: "Les deux"
+      0x01: "Bas"
+      0x02: "Haut"
 
 # ---------------------------------------------------------------------------
-# Switch (read-write binary ERDs — updates from bus AND toggleable from HA)
+# Binary sensors
+# ---------------------------------------------------------------------------
+binary_sensor:
+  # Door — 0x00 = open, 0x01 = closed (inverted so "on" = open)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Porte"
+    erd: 0x3037
+    device_class: door
+    inverted: true
+
+  # Remote-start armed
+  - platform: gea
+    gea_id: gea_hub
+    name: "Démarrage distant"
+    erd: 0x3087
+    icon: mdi:remote
+
+  # Drain pump running
+  - platform: gea
+    gea_id: gea_hub
+    name: "Pompe vidange active"
+    erd: 0x303D
+    device_class: running
+    icon: mdi:pump
+    entity_category: diagnostic
+
+  # Water valve open
+  - platform: gea
+    gea_id: gea_hub
+    name: "Vanne d'eau"
+    erd: 0x303F
+    device_class: opening
+    icon: mdi:valve
+    entity_category: diagnostic
+
+  # Heater element active
+  - platform: gea
+    gea_id: gea_hub
+    name: "Chauffage"
+    erd: 0x3046
+    device_class: heat
+    icon: mdi:heating-coil
+    entity_category: diagnostic
+
+  # Leak detected
+  - platform: gea
+    gea_id: gea_hub
+    name: "Fuite"
+    erd: 0x301D
+    device_class: moisture
+    icon: mdi:water-alert
+
+  # Flood detected
+  - platform: gea
+    gea_id: gea_hub
+    name: "Inondation"
+    erd: 0x3085
+    device_class: moisture
+    icon: mdi:water-alert
+
+  # End-of-cycle flag
+  - platform: gea
+    gea_id: gea_hub
+    name: "Fin de cycle"
+    erd: 0xD003
+    icon: mdi:check-circle
+
+  # Critical fault
+  - platform: gea
+    gea_id: gea_hub
+    name: "Erreur critique"
+    erd: 0x310A
+    device_class: problem
+    icon: mdi:alert-circle
+
+  # Non-critical fault
+  - platform: gea
+    gea_id: gea_hub
+    name: "Avertissement"
+    erd: 0x310B
+    device_class: problem
+    icon: mdi:alert
+    entity_category: diagnostic
+
+  # Steam option — current state (writable via the Vapeur switch)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Vapeur"
+    erd: 0x321F
+    icon: mdi:weather-fog
+
+  # Bottle Blast option — current state (writable via the Jets bouteilles switch)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Jets bouteilles"
+    erd: 0x3220
+    icon: mdi:bottle-wine
+
+  # UltraFresh option — current state (writable via the UltraFresh switch)
+  - platform: gea
+    gea_id: gea_hub
+    name: "UltraFresh"
+    erd: 0x3221
+    icon: mdi:air-filter
+
+  # Filter-clean reminder — bit 0 of reminder flags byte
+  - platform: gea
+    gea_id: gea_hub
+    name: "Rappel filtre"
+    erd: 0x3003
+    bitmask: 0x01
+    device_class: problem
+    icon: mdi:air-filter
+
+# ---------------------------------------------------------------------------
+# Switches (read-write binary option ERDs)
 # ---------------------------------------------------------------------------
 switch:
-  # ERD 0x3230 — toggles 0/1 on the bus; reflects appliance state in HA
   - platform: gea
     gea_id: gea_hub
-    name: "ERD 0x3230 Switch"
-    erd: 0x3230
-    entity_category: diagnostic
+    name: "Option Vapeur"
+    erd: 0x321F
+    icon: mdi:weather-fog
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Option Jets bouteilles"
+    erd: 0x3220
+    icon: mdi:bottle-wine
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Option UltraFresh"
+    erd: 0x3221
+    icon: mdi:air-filter
 
 # ---------------------------------------------------------------------------
-# Select (read-write enum ERDs — updates from bus AND selectable from HA)
+# Selects (read-write enum ERDs)
 # ---------------------------------------------------------------------------
 select:
-  # Wash cycle selection — reads cycle index from bus, writes new cycle to appliance
   - platform: gea
     gea_id: gea_hub
-    name: "Wash Cycle"
+    name: "Cycle"
     erd: 0x321B
     decode: uint8
     icon: mdi:dishwasher
     options:
       0x00: "AutoSense"
-      0x01: "Heavy"
+      0x01: "Intensif"
       0x02: "Normal"
-      0x03: "1 Hr Wash"
-      0x04: "Rinse"
+      0x03: "Lavage 1h"
+      0x04: "Rinçage"
+      0x05: "Cascade Platinum Plus"
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Réglage temp. lavage"
+    erd: 0x321C
+    decode: uint8
+    icon: mdi:thermometer
+    options:
+      0x00: "Aucun"
+      0x01: "Boost"
+      0x02: "Désinfection"
+      0x03: "Désinfection + Boost"
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Réglage séchage"
+    erd: 0x321D
+    decode: uint8
+    icon: mdi:hair-dryer
+    options:
+      0x00: "Aucun"
+      0x01: "Chaleur ajoutée"
+      0x02: "Séchage maximum"
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Zone"
+    erd: 0x321E
+    decode: uint8
+    icon: mdi:layers
+    options:
+      0x00: "Les deux"
+      0x01: "Bas"
+      0x02: "Haut"
 
 # ---------------------------------------------------------------------------
-# Button (fire-and-forget ERD writes — press triggers a write to the bus)
+# Buttons (fire-and-forget writes to the cycle-control ERD 0x3204)
 # ---------------------------------------------------------------------------
 button:
-  # Read ERD 0x0001 (model number) — test that write_erd round-trips work
-  # internal: true → visible in ESPHome web UI only, not exposed to HA
   - platform: gea
     gea_id: gea_hub
-    name: "Request Model Number"
-    erd: 0x0001
-    payload: [0x00]
-    icon: mdi:information-outline
-    internal: true
+    name: "Démarrer"
+    erd: 0x3204
+    payload: [0x01]
+    icon: mdi:play
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Annuler"
+    erd: 0x3204
+    payload: [0x02]
+    icon: mdi:stop
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Pause"
+    erd: 0x3204
+    payload: [0x03]
+    icon: mdi:pause
 
 # ---------------------------------------------------------------------------
-# Text sensors (read-only)
+# Numbers (read-write numeric ERDs)
 # ---------------------------------------------------------------------------
-text_sensor:
-  # Cycle name as ASCII text (e.g. "AutoSense", "Heavy", "Normal")
+number:
+  # Delay start (minutes, 0–720 = up to 12 h, step 60 min)
   - platform: gea
     gea_id: gea_hub
-    name: "Cycle Name"
-    erd: 0x301C
-    decode: ascii
-    icon: mdi:dishwasher
+    name: "Départ différé"
+    erd: 0x321A
+    decode: uint16_be
+    min_value: 0
+    max_value: 720
+    step: 60
+    unit_of_measurement: min
+    icon: mdi:clock-start
 
-  # Appliance model number — diagnostic, static info
+  # Remaining PODS count — decrement manually; appliance will count down
+  # automatically as cycles run.
   - platform: gea
     gea_id: gea_hub
-    name: "Model Number"
-    erd: 0x0001
-    decode: ascii
-    entity_category: diagnostic
-
-  # Cycle status — diagnostic raw hex for inspection
-  - platform: gea
-    gea_id: gea_hub
-    name: "Cycle Status Raw"
-    erd: 0x3000
-    entity_category: diagnostic
-
-  # Cycle config — diagnostic raw hex for inspection
-  - platform: gea
-    gea_id: gea_hub
-    name: "Cycle Config Raw"
-    erd: 0x3007
-    entity_category: diagnostic
-
-  # Unknown ERDs — all diagnostic until identified
-  - platform: gea
-    gea_id: gea_hub
-    name: "ERD 0x322A Raw"
-    erd: 0x322A
-    entity_category: diagnostic
-
-  - platform: gea
-    gea_id: gea_hub
-    name: "ERD 0x3227 Raw"
-    erd: 0x3227
-    entity_category: diagnostic
-
-  - platform: gea
-    gea_id: gea_hub
-    name: "ERD 0x3228 Raw"
-    erd: 0x3228
-    entity_category: diagnostic
-
-  - platform: gea
-    gea_id: gea_hub
-    name: "ERD 0x3229 Raw"
-    erd: 0x3229
-    entity_category: diagnostic
+    name: "PODS"
+    erd: 0x301F
+    decode: uint16_be
+    min_value: 0
+    max_value: 100
+    step: 1
+    icon: mdi:package-variant
