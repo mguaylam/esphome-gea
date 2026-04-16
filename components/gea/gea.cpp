@@ -234,6 +234,7 @@ void GEAComponent::setup() {
     dest_addr_ = GEA_BROADCAST_ADDR;
   }
   send_subscribe_all_(0x00);  // type=add
+  last_subscribe_ms_ = millis();
 }
 
 void GEAComponent::dump_config() {
@@ -409,6 +410,10 @@ void GEAComponent::loop() {
   //  - While silent (bus never connected or timed out): appliance may have reset and
   //    dropped our subscription without sending anything. Retry every 30 s so we
   //    recover from logical unsubscription without requiring a bus traffic event.
+  //  - Periodic retain (type=0x01) every 30 s while connected: without this the
+  //    appliance main board silently drops our subscription after a few minutes
+  //    and stops publishing state updates, even though voluntary broadcasts from
+  //    other nodes keep the bus "connected".
   bool connected = is_bus_connected();
   uint32_t now_sub = millis();
   if (connected && !was_connected_) {
@@ -418,6 +423,10 @@ void GEAComponent::loop() {
   } else if (!connected && (now_sub - last_subscribe_ms_ >= 30000)) {
     ESP_LOGD(TAG, "Bus silent — retrying subscribe-all");
     send_subscribe_all_(0x00);
+    last_subscribe_ms_ = now_sub;
+  } else if (connected && (now_sub - last_subscribe_ms_ >= 30000)) {
+    ESP_LOGV(TAG, "Subscription keep-alive (retain)");
+    send_subscribe_all_(0x01);
     last_subscribe_ms_ = now_sub;
   }
   was_connected_ = connected;
