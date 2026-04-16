@@ -38,7 +38,7 @@ jobs:
 
       - name: Create dummy secrets
         run: |
-          cat > secrets.yaml << 'EOF'
+          cat > $(dirname ${{ matrix.config }})/secrets.yaml << 'EOF'
           wifi_ssid: "ci-network"
           wifi_password: "ci-password"
           api_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
