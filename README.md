@@ -402,8 +402,8 @@ Complete working configurations are included for two appliances:
 
 | File | Appliance | Highlights |
 |------|-----------|------------|
-| [`dishwasher.yaml`](dishwasher.yaml) | GE PDP715SYV0FS | Cycle selection, elapsed time, ASCII cycle name, model retrieval button |
-| [`washer.yaml`](washer.yaml) | GE PFQ97HSPVDS (Ultrafast Combo) | Time remaining, door/lock/pump sensors, 200+ cycle options, remote start/stop, detergent/softener dosing |
+| [`PDP715SYV0FS.yaml`](examples/dishwasher/PDP715SYV0FS.yaml) | GE PDP715SYV0FS | Cycle selection, elapsed time, ASCII cycle name, model retrieval button |
+| [`PFQ97HSPVDS.yaml`](examples/washer/PFQ97HSPVDS.yaml) | GE PFQ97HSPVDS (Ultrafast Combo) | Time remaining, door/lock/pump sensors, 200+ cycle options, remote start/stop, detergent/softener dosing |
 
 ---
 
