@@ -92,31 +92,55 @@ gea:
   id: gea_hub
   uart_id: uart_gea
   src_address: 0xE4
+  erd_lookup: true
 
   # ERD 0x2154 is a 4-byte "Push Notifications" bitmap. Bytes 0-1 are flags
   # (firmware sets one bit at a time when a notification should fire, and
-  # clears all at cycle start). Bytes 2-3 advertise which flags are supported.
+  # clears all at cycle start). Bytes 2-3 advertise which flags are supported;
+  # on this appliance bytes 2-3 = 0xFF0F, so all 12 notifications below are
+  # supported (offset 4 "Clean v2 Foam Filter" is not supported and omitted).
   #
-  # Bit layout (GE convention: bit 0 = MSB of byte 0, bit 15 = LSB of byte 1):
-  #   byte 0 / 0x80 = Smart Dispense Softener Empty
-  #   byte 0 / 0x40 = Self Clean Cycle Reminder
-  #   byte 0 / 0x20 = Remove Lint From Mesh Filter
-  #   byte 0 / 0x10 = Clean Foam Filter
-  #   byte 1 / 0x80 = Delayed Cycle Started
-  #   byte 1 / 0x40 = Pre-Cycle End
-  #   byte 1 / 0x20 = Wash Complete
-  #   byte 1 / 0x10 = Cycle Complete
-  #   byte 1 / 0x08 = Unattended Clothes
-  #   byte 1 / 0x04 = Smart Dispense Detergent Low
-  #   byte 1 / 0x02 = Smart Dispense Detergent Empty
-  #   byte 1 / 0x01 = Smart Dispense Softener Low
+  # Bit layout (GE convention: offset N = bit N of big-endian uint16 over
+  # bytes 0-1, i.e. LSB-first):
+  #   byte 0 / 0x01 = Delayed Cycle Started            (offset 8)
+  #   byte 0 / 0x02 = Pre-Cycle End                    (offset 9)
+  #   byte 0 / 0x04 = Wash Complete                    (offset 10)
+  #   byte 0 / 0x08 = Cycle Complete                   (offset 11)
+  #   byte 0 / 0x10 = Unattended Clothes               (offset 12)
+  #   byte 0 / 0x20 = Smart Dispense Detergent Low     (offset 13)
+  #   byte 0 / 0x40 = Smart Dispense Detergent Empty   (offset 14)
+  #   byte 0 / 0x80 = Smart Dispense Softener Low      (offset 15)
+  #   byte 1 / 0x01 = Smart Dispense Softener Empty    (offset 0)
+  #   byte 1 / 0x02 = Self Clean Cycle Reminder        (offset 1)
+  #   byte 1 / 0x04 = Remove Lint From Mesh Filter     (offset 2)
+  #   byte 1 / 0x08 = Clean Foam Filter                (offset 3)
   #
   # Each trigger fires once on the 0→1 transition. The machine itself clears
   # all bits at cycle start, so no manual reset is needed.
   on_erd_change:
     - erd: 0x2154
-      byte_offset: 1
-      bitmask: 0x20
+      byte_offset: 0
+      bitmask: 0x01
+      edge: rising
+      then:
+        - homeassistant.event:
+            event: esphome.ge_washer_notification
+            data:
+              kind: delayed_cycle_started
+
+    - erd: 0x2154
+      byte_offset: 0
+      bitmask: 0x02
+      edge: rising
+      then:
+        - homeassistant.event:
+            event: esphome.ge_washer_notification
+            data:
+              kind: pre_cycle_end
+
+    - erd: 0x2154
+      byte_offset: 0
+      bitmask: 0x04
       edge: rising
       then:
         - homeassistant.event:
@@ -125,8 +149,8 @@ gea:
               kind: wash_complete
 
     - erd: 0x2154
-      byte_offset: 1
-      bitmask: 0x10
+      byte_offset: 0
+      bitmask: 0x08
       edge: rising
       then:
         - homeassistant.event:
@@ -135,8 +159,8 @@ gea:
               kind: cycle_complete
 
     - erd: 0x2154
-      byte_offset: 1
-      bitmask: 0x08
+      byte_offset: 0
+      bitmask: 0x10
       edge: rising
       then:
         - homeassistant.event:
@@ -145,8 +169,8 @@ gea:
               kind: unattended_clothes
 
     - erd: 0x2154
-      byte_offset: 1
-      bitmask: 0x04
+      byte_offset: 0
+      bitmask: 0x20
       edge: rising
       then:
         - homeassistant.event:
@@ -155,24 +179,14 @@ gea:
               kind: detergent_low
 
     - erd: 0x2154
-      byte_offset: 1
-      bitmask: 0x02
+      byte_offset: 0
+      bitmask: 0x40
       edge: rising
       then:
         - homeassistant.event:
             event: esphome.ge_washer_notification
             data:
               kind: detergent_empty
-
-    - erd: 0x2154
-      byte_offset: 1
-      bitmask: 0x01
-      edge: rising
-      then:
-        - homeassistant.event:
-            event: esphome.ge_washer_notification
-            data:
-              kind: softener_low
 
     - erd: 0x2154
       byte_offset: 0
@@ -182,17 +196,47 @@ gea:
         - homeassistant.event:
             event: esphome.ge_washer_notification
             data:
+              kind: softener_low
+
+    - erd: 0x2154
+      byte_offset: 1
+      bitmask: 0x01
+      edge: rising
+      then:
+        - homeassistant.event:
+            event: esphome.ge_washer_notification
+            data:
               kind: softener_empty
 
     - erd: 0x2154
-      byte_offset: 0
-      bitmask: 0x20
+      byte_offset: 1
+      bitmask: 0x02
+      edge: rising
+      then:
+        - homeassistant.event:
+            event: esphome.ge_washer_notification
+            data:
+              kind: self_clean_reminder
+
+    - erd: 0x2154
+      byte_offset: 1
+      bitmask: 0x04
       edge: rising
       then:
         - homeassistant.event:
             event: esphome.ge_washer_notification
             data:
               kind: lint_filter
+
+    - erd: 0x2154
+      byte_offset: 1
+      bitmask: 0x08
+      edge: rising
+      then:
+        - homeassistant.event:
+            event: esphome.ge_washer_notification
+            data:
+              kind: foam_filter
 
 # ---------------------------------------------------------------------------
 # Sensors (read-only)
@@ -286,23 +330,6 @@ sensor:
     filters:
       - lambda: return x / 1000.0 * 248.84;
 
-  # Smart Dispense — detergent loads remaining
-  - platform: gea
-    gea_id: gea_hub
-    name: "Chargements détergent restants"
-    erd: 0x203D
-    decode: uint16_be
-    accuracy_decimals: 0
-    icon: mdi:chart-bubble
-
-  # Smart Dispense — softener loads remaining
-  - platform: gea
-    gea_id: gea_hub
-    name: "Chargements assouplissant restants"
-    erd: 0x2148
-    decode: uint8
-    accuracy_decimals: 0
-    icon: mdi:feather
 
 # ---------------------------------------------------------------------------
 # Text sensors (read-only with value mappings)
