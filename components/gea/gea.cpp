@@ -535,6 +535,12 @@ void GEAComponent::register_entity(GEAEntity *entity) {
   entities_.push_back(entity);
 }
 
+void GEAComponent::read_erd(uint16_t erd) {
+  std::vector<uint8_t> body = {(uint8_t) (erd >> 8), (uint8_t) (erd & 0xFF)};
+  enqueue_request_(CMD_READ_REQUEST, std::move(body));
+  ESP_LOGD(TAG, "Queued read ERD 0x%04X", erd);
+}
+
 void GEAComponent::write_erd(uint16_t erd, const std::vector<uint8_t> &data) {
   std::vector<uint8_t> body;
   body.reserve(3 + data.size());
@@ -667,6 +673,16 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
         break;
       }
       std::vector<uint8_t> data(pkt.begin() + 9, pkt.begin() + 9 + size);
+      {
+        std::string hex;
+        char buf[3];
+        for (uint8_t b : data) {
+          snprintf(buf, sizeof(buf), "%02X", b);
+          hex += buf;
+        }
+        ESP_LOGI(TAG, "Read ERD 0x%04X OK (%zu B): %s", erd, data.size(), hex.c_str());
+      }
+      log_discovery_(erd, data);
       dispatch_erd_(erd, data);
       finish_pending_();
       break;

@@ -139,6 +139,9 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // ---- Called by writable entities (select, number, etc.) -----------------
   void write_erd(uint16_t erd, const std::vector<uint8_t> &data);
 
+  // ---- Explicit read — enqueues a single ERD read request -----------------
+  void read_erd(uint16_t erd);
+
   // ---- Status — usable in YAML lambdas (e.g. for a GEA-connected LED) -----
   // Returns true if a valid packet has been received within the last 30 s.
   bool is_bus_connected() const {
