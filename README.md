@@ -382,6 +382,28 @@ Transition back to SUBSCRIBING happens on two triggers:
 
 ---
 
+<details>
+<summary><strong>Request reliability</strong></summary>
+
+Every outgoing request (read, write, subscribe-all) goes through a single-in-flight queue with deterministic retry:
+
+| Parameter | Value |
+|-----------|-------|
+| Timeout per attempt | **250 ms** |
+| Max retries | **10** |
+| Total worst-case | **~2.75 s** before a request is dropped |
+
+- **Serialization** — only one request is on the wire at a time, so `request_id` matches between request and response without ambiguity.
+- **Retry on timeout** — if no matching response arrives within 250 ms, the same `request_id` is resent. A late response from a prior attempt still matches.
+- **Request-ID matching** — incoming responses whose `request_id` does not match the pending request are ignored; the pending request stays armed until it either matches a response or exhausts its retries.
+- **Unsolicited frames bypass the queue** — ACKs, publications, publication ACKs, and subscription host startup packets are not request/response pairs and are processed independently.
+
+Writes initiated from Home Assistant are non-blocking: the entity returns immediately and the queue transmits in the background. A dropped write (10 retries exhausted) is logged at `WARN` level.
+
+</details>
+
+---
+
 ## ERD Discovery
 
 **ERD** (Entity Reference Designator) is a 16-bit identifier for a data register on the appliance — like a temperature reading, machine state, or cycle selection.

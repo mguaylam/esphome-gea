@@ -3,7 +3,3 @@
 # You can modify this file to suit your needs.
 /.esphome/
 /secrets.yaml
-/.vscode/
-/components/gea/erd_table.h
-__pycache__/
-*.pyc

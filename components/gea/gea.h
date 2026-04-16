@@ -6,6 +6,7 @@
 #include "esphome/components/uart/uart.h"
 #include <string>
 #include <vector>
+#include <deque>
 #include <map>
 #include <cstdint>
 #include <cstdio>
@@ -101,6 +102,22 @@ class GEAEntity {
 };
 
 // ---------------------------------------------------------------------------
+// PendingRequest — a single outgoing ERD-API request awaiting a response.
+// The body holds the packet payload AFTER [CMD][REQ_ID] (e.g. for a write:
+// [ERD_H][ERD_L][size][data...]).  The expected response command is
+// (cmd | 0x01): READ_REQUEST→READ_RESPONSE, WRITE_REQUEST→WRITE_RESPONSE,
+// SUB_ALL_REQUEST→SUB_ALL_RESPONSE.
+// ---------------------------------------------------------------------------
+struct PendingRequest {
+  uint8_t cmd;
+  uint8_t req_id;
+  uint8_t dest;
+  std::vector<uint8_t> body;
+  uint8_t retries_left;
+  uint32_t sent_at_ms;
+};
+
+// ---------------------------------------------------------------------------
 // GEAComponent — the hub component; owns UART, discovery, and subscription
 // ---------------------------------------------------------------------------
 class GEAComponent : public uart::UARTDevice, public Component {
@@ -145,6 +162,14 @@ class GEAComponent : public uart::UARTDevice, public Component {
   void send_subscribe_all_(uint8_t type = 0x00);
   void send_pub_ack_(uint8_t context, uint8_t request_id);
 
+  // Request queue / retry machinery
+  uint8_t next_req_id_();
+  void enqueue_request_(uint8_t cmd, std::vector<uint8_t> body);
+  bool has_inflight_cmd_(uint8_t cmd) const;
+  void transmit_pending_();
+  void finish_pending_();
+  bool response_matches_pending_(uint8_t response_cmd, uint8_t req_id) const;
+
   // RX state machine
   void process_rx_byte_(uint8_t byte);
   void process_packet_(const std::vector<uint8_t> &pkt);
@@ -176,8 +201,17 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // Entity registry
   std::vector<GEAEntity *> entities_;
 
-  // Rolling request ID (incremented on every sent request)
+  // Rolling request ID (incremented per user-originated request, not per packet)
   uint8_t req_id_{1};
+
+  // Request machinery — serializes outgoing requests so only one is in flight
+  // at a time, retries on timeout, and drops once exhausted.  Unsolicited
+  // frames (ACK, publication ACK) bypass the queue.
+  static constexpr uint32_t REQUEST_TIMEOUT_MS = 250;
+  static constexpr uint8_t REQUEST_MAX_RETRIES = 10;
+  std::deque<PendingRequest> request_queue_;
+  PendingRequest pending_{};
+  bool pending_active_{false};
 
   // Timestamp of the last successfully received packet (ms since boot, 0 = none).
   uint32_t last_rx_ms_{0};

@@ -196,10 +196,13 @@ void GEAComponent::send_packet_(uint8_t dest, const std::vector<uint8_t> &payloa
   write_byte(GEA_STX);
   write_array(escaped.data(), escaped.size());
   write_byte(GEA_ETX);
+}
 
-  req_id_++;
+uint8_t GEAComponent::next_req_id_() {
+  uint8_t id = req_id_++;
   if (req_id_ == 0)
     req_id_ = 1;  // keep non-zero
+  return id;
 }
 
 // Send a bare ACK byte (no framing — GEA3 ACK is a single 0xE1 on the wire).
@@ -215,11 +218,73 @@ void GEAComponent::send_pub_ack_(uint8_t context, uint8_t request_id) {
 // Trigger ERD discovery: the appliance responds with a publication (0xA6) for
 // every ERD it supports.  We log each one and also route values to any
 // user-configured entities that match.
+//
+// type: 0x00 = add subscription, 0x01 = retain (keep-alive).
+// Skips if a subscribe-all is already in flight or queued, since pacing is
+// handled by the outer heartbeat in loop().
 void GEAComponent::send_subscribe_all_(uint8_t type) {
-  // type: 0x00 = add subscription, 0x01 = retain (keep-alive)
-  std::vector<uint8_t> payload = {CMD_SUB_ALL_REQUEST, req_id_, type};
-  send_packet_(dest_addr_, payload);
-  ESP_LOGD(TAG, "Sent subscribe-all request (type=%u)", type);
+  if (has_inflight_cmd_(CMD_SUB_ALL_REQUEST)) {
+    ESP_LOGV(TAG, "Subscribe-all already in flight — skipping");
+    return;
+  }
+  std::vector<uint8_t> body = {type};
+  enqueue_request_(CMD_SUB_ALL_REQUEST, std::move(body));
+  ESP_LOGD(TAG, "Queued subscribe-all request (type=%u)", type);
+}
+
+// =============================================================================
+// GEAComponent — request queue and retry machinery
+// =============================================================================
+
+void GEAComponent::enqueue_request_(uint8_t cmd, std::vector<uint8_t> body) {
+  PendingRequest req;
+  req.cmd = cmd;
+  req.req_id = next_req_id_();
+  req.dest = dest_addr_;
+  req.body = std::move(body);
+  req.retries_left = REQUEST_MAX_RETRIES;
+  req.sent_at_ms = 0;
+  request_queue_.push_back(std::move(req));
+}
+
+bool GEAComponent::has_inflight_cmd_(uint8_t cmd) const {
+  if (pending_active_ && pending_.cmd == cmd)
+    return true;
+  for (const auto &r : request_queue_) {
+    if (r.cmd == cmd)
+      return true;
+  }
+  return false;
+}
+
+// Build and send the currently-pending request on the wire.  Called on first
+// send and on every retry — the same req_id is reused so a late response from
+// a prior attempt still matches.
+void GEAComponent::transmit_pending_() {
+  std::vector<uint8_t> payload;
+  payload.reserve(2 + pending_.body.size());
+  payload.push_back(pending_.cmd);
+  payload.push_back(pending_.req_id);
+  payload.insert(payload.end(), pending_.body.begin(), pending_.body.end());
+  send_packet_(pending_.dest, payload);
+  pending_.sent_at_ms = millis();
+}
+
+void GEAComponent::finish_pending_() {
+  pending_active_ = false;
+  pending_.body.clear();
+}
+
+// Returns true if an incoming response's command and request ID match the
+// request currently in flight.  Used by response handlers to filter stray or
+// duplicated packets.
+bool GEAComponent::response_matches_pending_(uint8_t response_cmd, uint8_t req_id) const {
+  if (!pending_active_)
+    return false;
+  if (pending_.req_id != req_id)
+    return false;
+  // Request→response pairing: READ(0xA0)→0xA1, WRITE(0xA2)→0xA3, SUB(0xA4)→0xA5.
+  return response_cmd == (pending_.cmd | 0x01);
 }
 
 // =============================================================================
@@ -435,6 +500,30 @@ void GEAComponent::loop() {
     }
   }
 
+  // Request queue: retry pending on timeout, or promote the next queued
+  // request when idle.  Only one request is in flight at a time so request_id
+  // matching on the response is unambiguous.
+  uint32_t now_req = millis();
+  if (pending_active_) {
+    if (now_req - pending_.sent_at_ms >= REQUEST_TIMEOUT_MS) {
+      if (pending_.retries_left > 0) {
+        pending_.retries_left--;
+        ESP_LOGD(TAG, "Request cmd=0x%02X id=0x%02X timed out, retrying (%u left)",
+                 pending_.cmd, pending_.req_id, pending_.retries_left);
+        transmit_pending_();
+      } else {
+        ESP_LOGW(TAG, "Request cmd=0x%02X id=0x%02X exhausted retries, dropping",
+                 pending_.cmd, pending_.req_id);
+        finish_pending_();
+      }
+    }
+  }
+  if (!pending_active_ && !request_queue_.empty()) {
+    pending_ = std::move(request_queue_.front());
+    request_queue_.pop_front();
+    pending_active_ = true;
+    transmit_pending_();
+  }
 }
 
 // =============================================================================
@@ -447,16 +536,14 @@ void GEAComponent::register_entity(GEAEntity *entity) {
 }
 
 void GEAComponent::write_erd(uint16_t erd, const std::vector<uint8_t> &data) {
-  std::vector<uint8_t> payload;
-  payload.reserve(4 + data.size());
-  payload.push_back(CMD_WRITE_REQUEST);
-  payload.push_back(req_id_);
-  payload.push_back((uint8_t) (erd >> 8));
-  payload.push_back((uint8_t) (erd & 0xFF));
-  payload.push_back((uint8_t) data.size());
-  payload.insert(payload.end(), data.begin(), data.end());
-  send_packet_(dest_addr_, payload);
-  ESP_LOGD(TAG, "Write ERD 0x%04X (%zu bytes)", erd, data.size());
+  std::vector<uint8_t> body;
+  body.reserve(3 + data.size());
+  body.push_back((uint8_t) (erd >> 8));
+  body.push_back((uint8_t) (erd & 0xFF));
+  body.push_back((uint8_t) data.size());
+  body.insert(body.end(), data.begin(), data.end());
+  enqueue_request_(CMD_WRITE_REQUEST, std::move(body));
+  ESP_LOGD(TAG, "Queued write ERD 0x%04X (%zu bytes)", erd, data.size());
 }
 
 // =============================================================================
@@ -562,18 +649,26 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
       //                                          6=ERD_H, 7=ERD_L, 8=size, 9..
       if (pkt.size() < 9)
         break;
-      uint8_t result = pkt[5];
-      if (result != 0x00) {
-        uint16_t erd = (uint16_t) pkt[6] << 8 | pkt[7];
-        ESP_LOGW(TAG, "Read ERD 0x%04X failed, result=0x%02X", erd, result);
+      uint8_t resp_req_id = pkt[4];
+      if (!response_matches_pending_(cmd, resp_req_id)) {
+        ESP_LOGV(TAG, "Unmatched read response (req_id=0x%02X)", resp_req_id);
         break;
       }
+      uint8_t result = pkt[5];
       uint16_t erd = (uint16_t) pkt[6] << 8 | pkt[7];
-      uint8_t size = pkt[8];
-      if (pkt.size() < (size_t) (9 + size))
+      if (result != 0x00) {
+        ESP_LOGW(TAG, "Read ERD 0x%04X failed, result=0x%02X", erd, result);
+        finish_pending_();
         break;
+      }
+      uint8_t size = pkt[8];
+      if (pkt.size() < (size_t) (9 + size)) {
+        finish_pending_();
+        break;
+      }
       std::vector<uint8_t> data(pkt.begin() + 9, pkt.begin() + 9 + size);
       dispatch_erd_(erd, data);
+      finish_pending_();
       break;
     }
 
@@ -581,6 +676,11 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
       // [CMD][req_id][result][ERD_H][ERD_L]
       if (pkt.size() < 8)
         break;
+      uint8_t resp_req_id = pkt[4];
+      if (!response_matches_pending_(cmd, resp_req_id)) {
+        ESP_LOGV(TAG, "Unmatched write response (req_id=0x%02X)", resp_req_id);
+        break;
+      }
       uint8_t result = pkt[5];
       uint16_t erd = (uint16_t) pkt[6] << 8 | pkt[7];
       if (result != 0x00) {
@@ -588,6 +688,7 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
       } else {
         ESP_LOGD(TAG, "Write ERD 0x%04X OK", erd);
       }
+      finish_pending_();
       break;
     }
 
@@ -609,6 +710,11 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
       // [CMD][req_id][result]
       if (pkt.size() < 6)
         break;
+      uint8_t resp_req_id = pkt[4];
+      if (!response_matches_pending_(cmd, resp_req_id)) {
+        ESP_LOGV(TAG, "Unmatched subscribe-all response (req_id=0x%02X)", resp_req_id);
+        break;
+      }
       uint8_t result = pkt[5];
       if (result == 0x00) {
         if (sub_state_ == SubState::SUBSCRIBING) {
@@ -619,6 +725,7 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
       } else {
         ESP_LOGW(TAG, "Subscribe-all rejected, result=0x%02X", result);
       }
+      finish_pending_();
       break;
     }
 
