@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" style="font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono',monospace">
+  <defs>
+    <marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#8b949e"/>
+    </marker>
+    <marker id="at" markerWidth="8" markerHeight="6" refX="1" refY="3" orient="auto">
+      <polygon points="8 0, 0 3, 8 6" fill="#8b949e"/>
+    </marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#12181f"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="300" fill="url(#bg)" rx="12"/>
+
+  <!-- Title -->
+  <text x="450" y="30" text-anchor="middle" fill="#c9d1d9" font-size="13" font-weight="bold" letter-spacing="0.5">esphome-gea · System Architecture</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- GE APPLIANCE BOX                                           -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <rect x="16" y="50" width="148" height="210" rx="8" fill="#161b22" stroke="#388bfd" stroke-width="1.5"/>
+  <text x="90" y="71" text-anchor="middle" fill="#79c0ff" font-size="12" font-weight="bold">GE Appliance</text>
+  <line x1="16" y1="79" x2="164" y2="79" stroke="#21262d" stroke-width="1"/>
+  <text x="32" y="96" fill="#6e7681" font-size="9.5">ERDs (16-bit registers)</text>
+  <text x="32" y="114" fill="#8b949e" font-size="9.5">0x2000  Machine State</text>
+  <text x="32" y="129" fill="#8b949e" font-size="9.5">0x3035  Water Temp</text>
+  <text x="32" y="144" fill="#8b949e" font-size="9.5">0x2012  Door Sensor</text>
+  <text x="32" y="159" fill="#8b949e" font-size="9.5">0x321B  Cycle Select</text>
+  <text x="32" y="174" fill="#8b949e" font-size="9.5">0x2154  Notifications</text>
+  <text x="32" y="192" fill="#484f58" font-size="9">────────────────</text>
+  <text x="32" y="207" fill="#6e7681" font-size="9">6,700+ total ERDs</text>
+  <text x="32" y="223" fill="#6e7681" font-size="9">in public GE API</text>
+  <text x="32" y="239" fill="#6e7681" font-size="9">230,400 baud · UART</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- ARROW: Appliance ↔ ESP32                                   -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <line x1="168" y1="152" x2="216" y2="152" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)" marker-start="url(#at)"/>
+  <text x="192" y="140" text-anchor="middle" fill="#58a6ff" font-size="9" font-weight="bold">GEA3</text>
+  <text x="192" y="167" text-anchor="middle" fill="#6e7681" font-size="8.5">full-duplex</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- ESP32 BOX                                                   -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <rect x="220" y="44" width="326" height="216" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="383" y="65" text-anchor="middle" fill="#7ee787" font-size="12" font-weight="bold">XIAO ESP32-C3</text>
+  <line x1="220" y1="73" x2="546" y2="73" stroke="#21262d" stroke-width="1"/>
+
+  <!-- GEA component inner box -->
+  <rect x="232" y="80" width="302" height="170" rx="5" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <text x="383" y="97" text-anchor="middle" fill="#8b949e" font-size="10">gea: hub</text>
+  <line x1="232" y1="103" x2="534" y2="103" stroke="#21262d" stroke-width="0.8"/>
+
+  <!-- Entity platform chips – left column (read-only, green) -->
+  <rect x="238" y="111" width="138" height="22" rx="3" fill="#12261a" stroke="#238636" stroke-width="1"/>
+  <text x="307" y="126" text-anchor="middle" fill="#56d364" font-size="10">sensor</text>
+
+  <rect x="238" y="138" width="138" height="22" rx="3" fill="#12261a" stroke="#238636" stroke-width="1"/>
+  <text x="307" y="153" text-anchor="middle" fill="#56d364" font-size="10">binary_sensor</text>
+
+  <rect x="238" y="165" width="138" height="22" rx="3" fill="#12261a" stroke="#238636" stroke-width="1"/>
+  <text x="307" y="180" text-anchor="middle" fill="#56d364" font-size="10">text_sensor</text>
+
+  <rect x="238" y="192" width="138" height="22" rx="3" fill="#12261a" stroke="#238636" stroke-width="1"/>
+  <text x="307" y="207" text-anchor="middle" fill="#56d364" font-size="10">number (r/w)</text>
+
+  <!-- Entity platform chips – right column (read-write, purple) -->
+  <rect x="388" y="111" width="138" height="22" rx="3" fill="#1e1529" stroke="#6e40c9" stroke-width="1"/>
+  <text x="457" y="126" text-anchor="middle" fill="#d2a8ff" font-size="10">switch</text>
+
+  <rect x="388" y="138" width="138" height="22" rx="3" fill="#1e1529" stroke="#6e40c9" stroke-width="1"/>
+  <text x="457" y="153" text-anchor="middle" fill="#d2a8ff" font-size="10">select</text>
+
+  <rect x="388" y="165" width="138" height="22" rx="3" fill="#1e1529" stroke="#6e40c9" stroke-width="1"/>
+  <text x="457" y="180" text-anchor="middle" fill="#d2a8ff" font-size="10">button</text>
+
+  <rect x="388" y="192" width="138" height="22" rx="3" fill="#12202d" stroke="#1f6feb" stroke-width="1"/>
+  <text x="457" y="207" text-anchor="middle" fill="#79c0ff" font-size="10">on_erd_change</text>
+
+  <!-- Status LEDs note -->
+  <text x="383" y="232" text-anchor="middle" fill="#484f58" font-size="8.5">● heartbeat  ● wi-fi  ● bus health</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- ARROW: ESP32 → HA                                          -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <line x1="550" y1="152" x2="598" y2="152" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/>
+  <text x="574" y="140" text-anchor="middle" fill="#58a6ff" font-size="9" font-weight="bold">Wi-Fi</text>
+  <text x="574" y="167" text-anchor="middle" fill="#6e7681" font-size="8.5">native API</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- HOME ASSISTANT BOX                                          -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <rect x="602" y="50" width="282" height="210" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="743" y="71" text-anchor="middle" fill="#79c0ff" font-size="12" font-weight="bold">Home Assistant</text>
+  <line x1="602" y1="79" x2="884" y2="79" stroke="#21262d" stroke-width="1"/>
+  <text x="620" y="98"  fill="#8b949e" font-size="9.5">✓  Native entity integration</text>
+  <text x="620" y="115" fill="#8b949e" font-size="9.5">✓  Dashboards &amp; Lovelace cards</text>
+  <text x="620" y="132" fill="#8b949e" font-size="9.5">✓  Automations &amp; scripts</text>
+  <text x="620" y="149" fill="#8b949e" font-size="9.5">✓  Push notifications</text>
+  <text x="620" y="166" fill="#8b949e" font-size="9.5">✓  Energy monitoring</text>
+  <text x="620" y="183" fill="#8b949e" font-size="9.5">✓  Voice assistants</text>
+  <text x="620" y="200" fill="#8b949e" font-size="9.5">✓  History &amp; statistics</text>
+  <text x="620" y="218" fill="#8b949e" font-size="9.5">✓  Remote access</text>
+  <text x="620" y="235" fill="#8b949e" font-size="9.5">✓  Mobile app</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- CAPTION                                                     -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <text x="450" y="280" text-anchor="middle" fill="#484f58" font-size="9">green = read-only entities · purple = read-write entities · blue = automation trigger</text>
+</svg>

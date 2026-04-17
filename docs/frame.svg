@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 160" style="font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono',monospace">
+  <!-- Background -->
+  <rect width="760" height="160" fill="#0d1117" rx="10"/>
+
+  <!-- Title -->
+  <text x="380" y="24" text-anchor="middle" fill="#c9d1d9" font-size="12" font-weight="bold" letter-spacing="0.3">GEA3 Frame Structure</text>
+
+  <!-- ─── Field boxes ─────────────────────────────────────────── -->
+  <!-- STX -->
+  <rect x="20"  y="38" width="56"  height="64" rx="5" fill="#12182a" stroke="#388bfd" stroke-width="1.5"/>
+  <text x="48"  y="63"  text-anchor="middle" fill="#79c0ff" font-size="11" font-weight="bold">STX</text>
+  <text x="48"  y="79"  text-anchor="middle" fill="#58a6ff" font-size="9">0xE2</text>
+  <text x="48"  y="114" text-anchor="middle" fill="#6e7681" font-size="9">1 byte</text>
+
+  <!-- DEST -->
+  <rect x="80"  y="38" width="72"  height="64" rx="5" fill="#221e10" stroke="#d29922" stroke-width="1.5"/>
+  <text x="116" y="63"  text-anchor="middle" fill="#e3b341" font-size="11" font-weight="bold">DEST</text>
+  <text x="116" y="79"  text-anchor="middle" fill="#d29922" font-size="9">address</text>
+  <text x="116" y="114" text-anchor="middle" fill="#6e7681" font-size="9">1 byte</text>
+
+  <!-- LEN -->
+  <rect x="156" y="38" width="72"  height="64" rx="5" fill="#221e10" stroke="#d29922" stroke-width="1.5"/>
+  <text x="192" y="63"  text-anchor="middle" fill="#e3b341" font-size="11" font-weight="bold">LEN</text>
+  <text x="192" y="79"  text-anchor="middle" fill="#d29922" font-size="9">7 + n</text>
+  <text x="192" y="114" text-anchor="middle" fill="#6e7681" font-size="9">1 byte</text>
+
+  <!-- SRC -->
+  <rect x="232" y="38" width="72"  height="64" rx="5" fill="#221e10" stroke="#d29922" stroke-width="1.5"/>
+  <text x="268" y="63"  text-anchor="middle" fill="#e3b341" font-size="11" font-weight="bold">SRC</text>
+  <text x="268" y="79"  text-anchor="middle" fill="#d29922" font-size="9">address</text>
+  <text x="268" y="114" text-anchor="middle" fill="#6e7681" font-size="9">1 byte</text>
+
+  <!-- PAYLOAD (wider) -->
+  <rect x="308" y="38" width="234" height="64" rx="5" fill="#0f2218" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="425" y="61"  text-anchor="middle" fill="#7ee787" font-size="11" font-weight="bold">PAYLOAD</text>
+  <text x="425" y="77"  text-anchor="middle" fill="#56d364" font-size="9">cmd · req_id · ERD · data</text>
+  <text x="425" y="91"  text-anchor="middle" fill="#3fb950" font-size="8.5">(control bytes 0xE0–0xE3 escaped)</text>
+  <text x="425" y="114" text-anchor="middle" fill="#6e7681" font-size="9">n bytes</text>
+
+  <!-- CRC -->
+  <rect x="546" y="38" width="88"  height="64" rx="5" fill="#1a1028" stroke="#bc8cff" stroke-width="1.5"/>
+  <text x="590" y="63"  text-anchor="middle" fill="#d2a8ff" font-size="11" font-weight="bold">CRC</text>
+  <text x="590" y="79"  text-anchor="middle" fill="#bc8cff" font-size="8.5">CRC-16/CCITT</text>
+  <text x="590" y="114" text-anchor="middle" fill="#6e7681" font-size="9">2 bytes</text>
+
+  <!-- ETX -->
+  <rect x="638" y="38" width="56"  height="64" rx="5" fill="#12182a" stroke="#388bfd" stroke-width="1.5"/>
+  <text x="666" y="63"  text-anchor="middle" fill="#79c0ff" font-size="11" font-weight="bold">ETX</text>
+  <text x="666" y="79"  text-anchor="middle" fill="#58a6ff" font-size="9">0xE3</text>
+  <text x="666" y="114" text-anchor="middle" fill="#6e7681" font-size="9">1 byte</text>
+
+  <!-- CRC note -->
+  <text x="380" y="143" text-anchor="middle" fill="#484f58" font-size="8.5">CRC computed over DEST + LEN + SRC + PAYLOAD · polynomial 0x1021 · seed 0x1021</text>
+</svg>

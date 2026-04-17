@@ -8,6 +8,8 @@
 
 An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances via the **GEA3 serial bus**, with native [Home Assistant](https://www.home-assistant.io/) integration.
 
+![Architecture](docs/architecture.svg)
+
 ---
 
 ## Table of Contents
@@ -330,12 +332,7 @@ gea:
 
 GEA3 is a full-duplex serial protocol. Each frame has the following structure:
 
-```
- ┌──────┬──────┬─────┬─────┬──────────────┬─────────┬──────┐
- │ STX  │ DEST │ LEN │ SRC │   PAYLOAD    │   CRC   │ ETX  │
- │ 0xE2 │  1B  │  1B │  1B │   n bytes    │ 2 bytes │ 0xE3 │
- └──────┴──────┴─────┴─────┴──────────────┴─────────┴──────┘
-```
+![GEA3 Frame](docs/frame.svg)
 
 - **STX/ETX:** Frame delimiters (`0xE2` / `0xE3`)
 - **LEN:** Total logical length = `7 + len(payload)`
@@ -357,6 +354,38 @@ GEA3 is a full-duplex serial protocol. Each frame has the following structure:
 | Subscription Host Startup | `0xA8` | ← Appliance | Announces appliance just came online |
 | ACK | `0xE1` | ↔ Both | Single-byte acknowledgement |
 
+### Typical Exchange
+
+```mermaid
+sequenceDiagram
+    participant E as ESP32
+    participant A as GE Appliance
+
+    Note over E,A: Boot — initial subscription
+    E->>A: Subscribe-All 0xA4 (type=0x00)
+    A-->>E: ACK 0xE1
+    A->>E: Subscribe-All Ack 0xA5
+    E-->>A: ACK 0xE1
+    A->>E: Publication 0xA6 (all ERDs broadcast)
+    E-->>A: Publication Ack 0xA7
+
+    Note over E,A: Read ERD (e.g. water temperature)
+    E->>A: Read Request 0xA0 [ERD=0x3035]
+    A-->>E: ACK 0xE1
+    A->>E: Read Response 0xA1 [value=75]
+    E-->>A: ACK 0xE1
+
+    Note over E,A: Write ERD (from Home Assistant)
+    E->>A: Write Request 0xA2 [ERD=0x321B, val=0x02]
+    A-->>E: ACK 0xE1
+    A->>E: Write Response 0xA3
+    E-->>A: ACK 0xE1
+
+    Note over E,A: Appliance-initiated change
+    A->>E: Publication 0xA6 [ERD=0x2000 updated]
+    E-->>A: Publication Ack 0xA7
+```
+
 </details>
 
 ---
@@ -365,6 +394,27 @@ GEA3 is a full-duplex serial protocol. Each frame has the following structure:
 <summary><strong>Connection lifecycle</strong></summary>
 
 The component uses a two-state subscription machine:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> SUBSCRIBING
+
+    SUBSCRIBING --> SUBSCRIBED : 0xA5 ack (result == 0x00)
+    SUBSCRIBED --> SUBSCRIBING : 0xA8 appliance reboot\nor bus reconnect
+
+    state SUBSCRIBING {
+        [*] --> idle
+        idle --> tx : every 1 s
+        tx --> idle : send subscribe-all\ntype=0x00
+    }
+
+    state SUBSCRIBED {
+        [*] --> active
+        active --> keepalive : every 30 s
+        keepalive --> active : send subscribe-all\ntype=0x01 (retain)
+    }
+```
 
 | State | Behaviour |
 | ----- | --------- |
