@@ -28,21 +28,29 @@ Usage:
 
     # Slower scan (longer wait per ERD, for unreliable connections)
     python3 tools/erd_scanner.py --host 192.168.1.42 --key "YOUR_API_KEY" --delay 6
+
+    # Debug mode — print raw log lines for first few ERDs
+    python3 tools/erd_scanner.py --host 192.168.1.42 --key "YOUR_API_KEY" --verbose
 """
 
 import argparse
 import asyncio
 import json
+import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
 
 try:
-    from aioesphomeapi import APIClient
+    from aioesphomeapi import APIClient, LogLevel
 except ImportError:
     print("Install aioesphomeapi:  pip install aioesphomeapi")
     sys.exit(1)
+
+BAR_FILL = "\u2588"
+BAR_EMPTY = "\u2591"
 
 
 def load_erd_table(json_path):
@@ -66,25 +74,83 @@ def find_erd_json():
     return None
 
 
-async def scan(host, key, erds, delay, password):
+def format_time(seconds):
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    if seconds < 3600:
+        return f"{seconds / 60:.0f}m"
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    return f"{h}h{m:02d}m"
+
+
+def progress_bar(current, total, found, failed, elapsed, erd_hex, erd_name):
+    cols = shutil.get_terminal_size((80, 24)).columns
+    pct = current / total if total else 0
+    rate = current / elapsed if elapsed > 0 else 0
+    eta = (total - current) / rate if rate > 0 else 0
+
+    bar_width = min(30, cols - 60)
+    if bar_width < 5:
+        bar_width = 5
+    filled = int(bar_width * pct)
+    bar = BAR_FILL * filled + BAR_EMPTY * (bar_width - filled)
+
+    status = (
+        f" {bar} {current}/{total} {pct*100:4.1f}%"
+        f"  found:{found}  fail:{failed}"
+        f"  eta:{format_time(eta)}  {erd_hex}"
+    )
+
+    if len(status) > cols:
+        status = status[:cols]
+
+    sys.stdout.write(f"\r{status}")
+    sys.stdout.flush()
+
+
+def clear_progress():
+    cols = shutil.get_terminal_size((80, 24)).columns
+    sys.stdout.write("\r" + " " * cols + "\r")
+    sys.stdout.flush()
+
+
+async def scan(host, key, erds, delay, password, verbose):
     results = {}
     log_lines = []
+    total_log_count = 0
 
     def on_log(msg):
-        log_lines.append(msg.message)
+        nonlocal total_log_count
+        total_log_count += 1
+        # msg may have .message (str) or .text or be a raw object
+        text = getattr(msg, "message", None) or getattr(msg, "text", None) or str(msg)
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", errors="replace")
+        log_lines.append(text)
 
     client = APIClient(host, 6053, password=password, noise_psk=key)
     try:
         await client.connect(login=True)
         print(f"Connected to {host}")
 
-        await client.subscribe_logs(on_log)
+        # Subscribe to logs — must specify level, default is NONE (no logs)
+        client.subscribe_logs(on_log, log_level=LogLevel.LOG_LEVEL_INFO)
+
+        # Wait a moment and check if logs are flowing
+        await asyncio.sleep(2)
+        if total_log_count > 0:
+            print(f"Log subscription active ({total_log_count} messages received)")
+        else:
+            print("WARNING: No log messages received yet — results may be unreliable")
 
         resp = await client.list_entities_services()
         services = resp.services if hasattr(resp, "services") else (resp[1] if isinstance(resp, tuple) else [])
 
         read_service = None
         for svc in services:
+            if verbose:
+                print(f"  Service: {svc.name} (key={svc.key})")
             if svc.name == "read_erd":
                 read_service = svc
                 break
@@ -104,23 +170,32 @@ async def scan(host, key, erds, delay, password):
         total = len(erds)
         found = 0
         failed = 0
+        no_response = 0
         start_time = time.monotonic()
 
-        print(f"Scanning {total} ERDs (delay={delay}s per ERD)\n")
+        print(f"Scanning {total} ERDs (delay={delay}s per ERD, "
+              f"est. {format_time(total * delay)})\n")
 
         for i, erd in enumerate(erds):
             erd_id = erd["id"]
             erd_name = erd["name"]
             erd_hex = f"0x{erd_id:04X}"
 
+            elapsed = time.monotonic() - start_time
+            progress_bar(i, total, found, failed, elapsed, erd_hex, erd_name)
+
             log_lines.clear()
 
             await client.execute_service(read_service, {"address": erd_id})
 
-            # Wait for the ESP to process the request and respond (or timeout).
-            # The request queue retries at 250ms intervals up to 10 times (~2.75s),
-            # so we need to wait at least that long for non-existent ERDs.
             await asyncio.sleep(delay)
+
+            # Debug: show raw log lines for first few ERDs
+            if verbose and i < 5:
+                clear_progress()
+                print(f"\n  [DEBUG] ERD {erd_hex} — {len(log_lines)} log lines:")
+                for line in log_lines[:20]:
+                    print(f"    {line}")
 
             hit = False
             for line in log_lines:
@@ -129,8 +204,9 @@ async def scan(host, key, erds, delay, password):
                 if "Read ERD" in line and "OK" in line:
                     found += 1
                     results[erd_id] = {"name": erd_name, "log": line.strip()}
-                    print(f"  [{i+1:4d}/{total}]  FOUND  {erd_hex}  {erd_name}")
-                    print(f"                    {line.strip()}")
+                    clear_progress()
+                    print(f"  FOUND  {erd_hex}  {erd_name}")
+                    print(f"         {line.strip()}")
                     hit = True
                     break
                 if "failed" in line:
@@ -139,22 +215,18 @@ async def scan(host, key, erds, delay, password):
                     break
 
             if not hit:
-                # No response -- ERD not implemented on this appliance
-                pass
-
-            if not hit and (i + 1) % 100 == 0:
-                elapsed = time.monotonic() - start_time
-                rate = (i + 1) / elapsed if elapsed > 0 else 0
-                eta = (total - i - 1) / rate if rate > 0 else 0
-                print(f"  [{i+1:4d}/{total}]  ...scanning ({found} found, ~{eta/60:.0f} min remaining)")
+                no_response += 1
 
         elapsed = time.monotonic() - start_time
+        clear_progress()
+
         print(f"\n{'=' * 70}")
-        print(f"Scan complete in {elapsed/60:.1f} minutes")
-        print(f"  Probed:    {total}")
-        print(f"  Found:     {found}")
-        print(f"  Rejected:  {failed}")
-        print(f"  No reply:  {total - found - failed}")
+        print(f"Scan complete in {format_time(elapsed)}")
+        print(f"  Probed:      {total}")
+        print(f"  Found:       {found}")
+        print(f"  Rejected:    {failed}")
+        print(f"  No reply:    {no_response}")
+        print(f"  Log msgs:    {total_log_count}")
         print(f"{'=' * 70}")
 
         if results:
@@ -195,6 +267,10 @@ def main():
         "--erds", default=None,
         help="Path to appliance_api_erd_definitions.json",
     )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Print raw log lines for the first few ERDs (debugging)",
+    )
     args = parser.parse_args()
 
     json_path = args.erds or find_erd_json()
@@ -209,7 +285,7 @@ def main():
             all_erds = load_erd_table(json_path)
             erds = [e for e in all_erds if start <= e["id"] <= end]
             if not erds:
-                erds = [{"id": i, "name": f"Unknown"} for i in range(start, end + 1)]
+                erds = [{"id": i, "name": "Unknown"} for i in range(start, end + 1)]
         else:
             erds = [{"id": i, "name": "Unknown"} for i in range(start, end + 1)]
     elif json_path:
@@ -222,7 +298,7 @@ def main():
     if args.delay < 3:
         print(f"WARNING: delay={args.delay}s may be too short (request timeout is ~2.75s)")
 
-    asyncio.run(scan(args.host, args.key, erds, args.delay, args.password))
+    asyncio.run(scan(args.host, args.key, erds, args.delay, args.password, args.verbose))
 
 
 if __name__ == "__main__":
