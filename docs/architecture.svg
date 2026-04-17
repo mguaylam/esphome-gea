@@ -1,113 +1,146 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" style="font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono',monospace">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 516">
+  <style>
+    text { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+
+    .bg       { fill: #ffffff; }
+    .box      { fill: #f6f8fa; }
+    .inner    { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
+    .sep      { stroke: #d0d7de; stroke-width: 0.8; fill: none; }
+    .l-div    { stroke: #d0d7de; stroke-width: 0.8; }
+    .bd-app   { stroke: #0969da; stroke-width: 1.5; fill: none; }
+    .bd-esp   { stroke: #1a7f37; stroke-width: 1.5; fill: none; }
+    .bd-ha    { stroke: #0550ae; stroke-width: 1.5; fill: none; }
+    .t-head   { fill: #1f2328; font-size: 12px; font-weight: bold; }
+    .t-sub    { fill: #636c76; font-size: 9px; }
+    .t-arr    { fill: #0969da; font-size: 9px; font-weight: bold; }
+    .t-l1     { fill: #0550ae; font-size: 10px; font-weight: bold; }
+    .t-l2     { fill: #7d4e00; font-size: 10px; font-weight: bold; }
+    .t-l3     { fill: #6639ba; font-size: 10px; font-weight: bold; }
+    .t-l4     { fill: #1a7f37; font-size: 10px; font-weight: bold; }
+    .t-lsub   { fill: #636c76; font-size: 9px; }
+    .c-gr     { fill: #dafbe1; stroke: #2da44e; stroke-width: 0.8; }
+    .c-gr-t   { fill: #1a7f37; font-size: 9px; }
+    .c-pu     { fill: #fbefff; stroke: #8250df; stroke-width: 0.8; }
+    .c-pu-t   { fill: #6639ba; font-size: 9px; }
+    .c-bl     { fill: #ddf4ff; stroke: #218bff; stroke-width: 0.8; }
+    .c-bl-t   { fill: #0969da; font-size: 9px; }
+
+    @media (prefers-color-scheme: dark) {
+      .bg       { fill: #0d1117; }
+      .box      { fill: #161b22; }
+      .inner    { fill: #0d1117; stroke: #30363d; }
+      .sep      { stroke: #21262d; }
+      .l-div    { stroke: #21262d; }
+      .bd-app   { stroke: #388bfd; }
+      .bd-esp   { stroke: #3fb950; }
+      .bd-ha    { stroke: #58a6ff; }
+      .t-head   { fill: #e6edf3; }
+      .t-sub    { fill: #8b949e; }
+      .t-arr    { fill: #79c0ff; }
+      .t-l1     { fill: #79c0ff; }
+      .t-l2     { fill: #e3b341; }
+      .t-l3     { fill: #d2a8ff; }
+      .t-l4     { fill: #56d364; }
+      .t-lsub   { fill: #8b949e; }
+      .c-gr     { fill: #12261a; stroke: #238636; }
+      .c-gr-t   { fill: #56d364; }
+      .c-pu     { fill: #1e1529; stroke: #6e40c9; }
+      .c-pu-t   { fill: #d2a8ff; }
+      .c-bl     { fill: #12202d; stroke: #1f6feb; }
+      .c-bl-t   { fill: #79c0ff; }
+    }
+  </style>
+
   <defs>
-    <marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-      <polygon points="0 0, 8 3, 0 6" fill="#8b949e"/>
+    <marker id="ah" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+      <polygon points="0 0, 7 2.5, 0 5" fill="#6e7681"/>
     </marker>
-    <marker id="at" markerWidth="8" markerHeight="6" refX="1" refY="3" orient="auto">
-      <polygon points="8 0, 0 3, 8 6" fill="#8b949e"/>
-    </marker>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0d1117"/>
-      <stop offset="100%" stop-color="#12181f"/>
-    </linearGradient>
+    <clipPath id="ca"><rect x="60"  y="14"  width="400" height="60"  rx="7"/></clipPath>
+    <clipPath id="ce"><rect x="16"  y="110" width="488" height="278" rx="7"/></clipPath>
+    <clipPath id="ch"><rect x="60"  y="422" width="400" height="76"  rx="7"/></clipPath>
   </defs>
 
-  <!-- Background -->
-  <rect width="900" height="300" fill="url(#bg)" rx="12"/>
+  <rect class="bg" width="520" height="516" rx="10"/>
 
-  <!-- Title -->
-  <text x="450" y="30" text-anchor="middle" fill="#c9d1d9" font-size="13" font-weight="bold" letter-spacing="0.5">esphome-gea · System Architecture</text>
+  <!-- ── GE Appliance ──────────────────────────────────────── -->
+  <rect class="box"    x="60"  y="14" width="400" height="60" rx="7"/>
+  <rect class="bd-app" x="60"  y="14" width="400" height="60" rx="7"/>
+  <g clip-path="url(#ca)">
+    <text class="t-head" x="260" y="35" text-anchor="middle">GE Appliance</text>
+    <line class="sep" x1="60" y1="42" x2="460" y2="42"/>
+    <text class="t-sub" x="260" y="57" text-anchor="middle">ERD registers · UART serial bus · GEA3 protocol</text>
+  </g>
 
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <!-- GE APPLIANCE BOX                                           -->
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <rect x="16" y="50" width="148" height="210" rx="8" fill="#161b22" stroke="#388bfd" stroke-width="1.5"/>
-  <text x="90" y="71" text-anchor="middle" fill="#79c0ff" font-size="12" font-weight="bold">GE Appliance</text>
-  <line x1="16" y1="79" x2="164" y2="79" stroke="#21262d" stroke-width="1"/>
-  <text x="32" y="96" fill="#6e7681" font-size="9.5">ERDs (16-bit registers)</text>
-  <text x="32" y="114" fill="#8b949e" font-size="9.5">0x2000  Machine State</text>
-  <text x="32" y="129" fill="#8b949e" font-size="9.5">0x3035  Water Temp</text>
-  <text x="32" y="144" fill="#8b949e" font-size="9.5">0x2012  Door Sensor</text>
-  <text x="32" y="159" fill="#8b949e" font-size="9.5">0x321B  Cycle Select</text>
-  <text x="32" y="174" fill="#8b949e" font-size="9.5">0x2154  Notifications</text>
-  <text x="32" y="192" fill="#484f58" font-size="9">────────────────</text>
-  <text x="32" y="207" fill="#6e7681" font-size="9">6,700+ total ERDs</text>
-  <text x="32" y="223" fill="#6e7681" font-size="9">in public GE API</text>
-  <text x="32" y="239" fill="#6e7681" font-size="9">230,400 baud · UART</text>
+  <!-- ── Arrow down ───────────────────────────────────────── -->
+  <line stroke="#6e7681" stroke-width="1.5" x1="260" y1="78" x2="260" y2="106" marker-end="url(#ah)"/>
+  <text class="t-arr" x="274" y="96" text-anchor="start">GEA3 serial</text>
 
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <!-- ARROW: Appliance ↔ ESP32                                   -->
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <line x1="168" y1="152" x2="216" y2="152" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)" marker-start="url(#at)"/>
-  <text x="192" y="140" text-anchor="middle" fill="#58a6ff" font-size="9" font-weight="bold">GEA3</text>
-  <text x="192" y="167" text-anchor="middle" fill="#6e7681" font-size="8.5">full-duplex</text>
+  <!-- ── XIAO ESP32-C3 ─────────────────────────────────────── -->
+  <rect class="box"    x="16" y="110" width="488" height="278" rx="7"/>
+  <rect class="bd-esp" x="16" y="110" width="488" height="278" rx="7"/>
+  <g clip-path="url(#ce)">
+    <text class="t-head" x="260" y="129" text-anchor="middle">XIAO ESP32-C3</text>
 
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <!-- ESP32 BOX                                                   -->
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <rect x="220" y="44" width="326" height="216" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="383" y="65" text-anchor="middle" fill="#7ee787" font-size="12" font-weight="bold">XIAO ESP32-C3</text>
-  <line x1="220" y1="73" x2="546" y2="73" stroke="#21262d" stroke-width="1"/>
+    <!-- Inner layered stack -->
+    <rect class="inner" x="28" y="135" width="464" height="244" rx="5"/>
 
-  <!-- GEA component inner box -->
-  <rect x="232" y="80" width="302" height="170" rx="5" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
-  <text x="383" y="97" text-anchor="middle" fill="#8b949e" font-size="10">gea: hub</text>
-  <line x1="232" y1="103" x2="534" y2="103" stroke="#21262d" stroke-width="0.8"/>
+    <!-- Layer 1: Protocol -->
+    <text class="t-l1"  x="42" y="153">Protocol</text>
+    <text class="t-lsub" x="42" y="167">RX frame parser · CRC-16/CCITT · byte escaping</text>
+    <line class="l-div" x1="28" y1="177" x2="492" y2="177"/>
 
-  <!-- Entity platform chips – left column (read-only, green) -->
-  <rect x="238" y="111" width="138" height="22" rx="3" fill="#12261a" stroke="#238636" stroke-width="1"/>
-  <text x="307" y="126" text-anchor="middle" fill="#56d364" font-size="10">sensor</text>
+    <!-- Layer 2: Request queue -->
+    <text class="t-l2"  x="42" y="194">Request queue</text>
+    <text class="t-lsub" x="42" y="208">single in-flight · 250 ms timeout · 10 retries</text>
+    <line class="l-div" x1="28" y1="218" x2="492" y2="218"/>
 
-  <rect x="238" y="138" width="138" height="22" rx="3" fill="#12261a" stroke="#238636" stroke-width="1"/>
-  <text x="307" y="153" text-anchor="middle" fill="#56d364" font-size="10">binary_sensor</text>
+    <!-- Layer 3: Subscription -->
+    <text class="t-l3"  x="42" y="235">Subscription</text>
+    <text class="t-lsub" x="42" y="249">SUBSCRIBING → SUBSCRIBED · 30 s keep-alive</text>
+    <line class="l-div" x1="28" y1="259" x2="492" y2="259"/>
 
-  <rect x="238" y="165" width="138" height="22" rx="3" fill="#12261a" stroke="#238636" stroke-width="1"/>
-  <text x="307" y="180" text-anchor="middle" fill="#56d364" font-size="10">text_sensor</text>
+    <!-- Layer 4: Entity platforms -->
+    <text class="t-l4" x="42" y="275">Entity platforms</text>
 
-  <rect x="238" y="192" width="138" height="22" rx="3" fill="#12261a" stroke="#238636" stroke-width="1"/>
-  <text x="307" y="207" text-anchor="middle" fill="#56d364" font-size="10">number (r/w)</text>
+    <!-- Row 1 (read-only, green): 3 chips -->
+    <rect class="c-gr" x="38"  y="282" width="145" height="19" rx="3"/>
+    <text class="c-gr-t" x="110" y="295" text-anchor="middle">sensor</text>
 
-  <!-- Entity platform chips – right column (read-write, purple) -->
-  <rect x="388" y="111" width="138" height="22" rx="3" fill="#1e1529" stroke="#6e40c9" stroke-width="1"/>
-  <text x="457" y="126" text-anchor="middle" fill="#d2a8ff" font-size="10">switch</text>
+    <rect class="c-gr" x="187" y="282" width="145" height="19" rx="3"/>
+    <text class="c-gr-t" x="259" y="295" text-anchor="middle">binary_sensor</text>
 
-  <rect x="388" y="138" width="138" height="22" rx="3" fill="#1e1529" stroke="#6e40c9" stroke-width="1"/>
-  <text x="457" y="153" text-anchor="middle" fill="#d2a8ff" font-size="10">select</text>
+    <rect class="c-gr" x="336" y="282" width="146" height="19" rx="3"/>
+    <text class="c-gr-t" x="409" y="295" text-anchor="middle">text_sensor</text>
 
-  <rect x="388" y="165" width="138" height="22" rx="3" fill="#1e1529" stroke="#6e40c9" stroke-width="1"/>
-  <text x="457" y="180" text-anchor="middle" fill="#d2a8ff" font-size="10">button</text>
+    <!-- Row 2 (read-write, purple): 4 chips -->
+    <rect class="c-pu" x="38"  y="306" width="108" height="19" rx="3"/>
+    <text class="c-pu-t" x="92"  y="319" text-anchor="middle">switch</text>
 
-  <rect x="388" y="192" width="138" height="22" rx="3" fill="#12202d" stroke="#1f6feb" stroke-width="1"/>
-  <text x="457" y="207" text-anchor="middle" fill="#79c0ff" font-size="10">on_erd_change</text>
+    <rect class="c-pu" x="150" y="306" width="108" height="19" rx="3"/>
+    <text class="c-pu-t" x="204" y="319" text-anchor="middle">select</text>
 
-  <!-- Status LEDs note -->
-  <text x="383" y="232" text-anchor="middle" fill="#484f58" font-size="8.5">● heartbeat  ● wi-fi  ● bus health</text>
+    <rect class="c-pu" x="262" y="306" width="108" height="19" rx="3"/>
+    <text class="c-pu-t" x="316" y="319" text-anchor="middle">number</text>
 
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <!-- ARROW: ESP32 → HA                                          -->
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <line x1="550" y1="152" x2="598" y2="152" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/>
-  <text x="574" y="140" text-anchor="middle" fill="#58a6ff" font-size="9" font-weight="bold">Wi-Fi</text>
-  <text x="574" y="167" text-anchor="middle" fill="#6e7681" font-size="8.5">native API</text>
+    <rect class="c-pu" x="374" y="306" width="108" height="19" rx="3"/>
+    <text class="c-pu-t" x="428" y="319" text-anchor="middle">button</text>
 
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <!-- HOME ASSISTANT BOX                                          -->
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <rect x="602" y="50" width="282" height="210" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
-  <text x="743" y="71" text-anchor="middle" fill="#79c0ff" font-size="12" font-weight="bold">Home Assistant</text>
-  <line x1="602" y1="79" x2="884" y2="79" stroke="#21262d" stroke-width="1"/>
-  <text x="620" y="98"  fill="#8b949e" font-size="9.5">✓  Native entity integration</text>
-  <text x="620" y="115" fill="#8b949e" font-size="9.5">✓  Dashboards &amp; Lovelace cards</text>
-  <text x="620" y="132" fill="#8b949e" font-size="9.5">✓  Automations &amp; scripts</text>
-  <text x="620" y="149" fill="#8b949e" font-size="9.5">✓  Push notifications</text>
-  <text x="620" y="166" fill="#8b949e" font-size="9.5">✓  Energy monitoring</text>
-  <text x="620" y="183" fill="#8b949e" font-size="9.5">✓  Voice assistants</text>
-  <text x="620" y="200" fill="#8b949e" font-size="9.5">✓  History &amp; statistics</text>
-  <text x="620" y="218" fill="#8b949e" font-size="9.5">✓  Remote access</text>
-  <text x="620" y="235" fill="#8b949e" font-size="9.5">✓  Mobile app</text>
+    <!-- Row 3 (automation, blue): 1 wide chip -->
+    <rect class="c-bl" x="38" y="330" width="444" height="19" rx="3"/>
+    <text class="c-bl-t" x="260" y="343" text-anchor="middle">on_erd_change · rising / falling / any</text>
+  </g>
 
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <!-- CAPTION                                                     -->
-  <!-- ═══════════════════════════════════════════════════════════ -->
-  <text x="450" y="280" text-anchor="middle" fill="#484f58" font-size="9">green = read-only entities · purple = read-write entities · blue = automation trigger</text>
+  <!-- ── Arrow down ───────────────────────────────────────── -->
+  <line stroke="#6e7681" stroke-width="1.5" x1="260" y1="392" x2="260" y2="418" marker-end="url(#ah)"/>
+  <text class="t-arr" x="274" y="408" text-anchor="start">Wi-Fi · ESPHome API</text>
+
+  <!-- ── Home Assistant ────────────────────────────────────── -->
+  <rect class="box"   x="60" y="422" width="400" height="76" rx="7"/>
+  <rect class="bd-ha" x="60" y="422" width="400" height="76" rx="7"/>
+  <g clip-path="url(#ch)">
+    <text class="t-head" x="260" y="441" text-anchor="middle">Home Assistant</text>
+    <line class="sep" x1="60" y1="448" x2="460" y2="448"/>
+    <text class="t-sub" x="260" y="463" text-anchor="middle">ESPHome native API · device_class · state_class</text>
+    <text class="t-sub" x="260" y="480" text-anchor="middle">homeassistant.event · entity_category: diagnostic</text>
+  </g>
 </svg>
