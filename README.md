@@ -285,7 +285,7 @@ button:
     gea_id: gea_hub
     name: "Remote Start"
     erd: 0x2149
-    data: [0x01]
+    payload: [0x01]
 ```
 
 ---
