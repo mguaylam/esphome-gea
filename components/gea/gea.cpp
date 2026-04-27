@@ -20,123 +20,16 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
 // =============================================================================
 
 float GEAEntity::decode_as_float(const std::vector<uint8_t> &data) const {
-  if (data.size() <= (size_t) byte_offset_)
-    return 0.0f;
-  const uint8_t *d = data.data() + byte_offset_;
-  size_t rem = data.size() - byte_offset_;
-  float raw = 0.0f;
-
-  switch (decode_) {
-    case GeaDecodeType::UINT8:
-      raw = (rem >= 1) ? (float) d[0] : 0.0f;
-      break;
-
-    case GeaDecodeType::UINT16_BE:
-      raw = (rem >= 2) ? (float) ((uint16_t) d[0] << 8 | d[1]) : 0.0f;
-      break;
-
-    case GeaDecodeType::UINT16_LE:
-      raw = (rem >= 2) ? (float) ((uint16_t) d[1] << 8 | d[0]) : 0.0f;
-      break;
-
-    case GeaDecodeType::UINT32_BE:
-      if (rem >= 4)
-        raw = (float) ((uint32_t) d[0] << 24 | (uint32_t) d[1] << 16 | (uint32_t) d[2] << 8 | d[3]);
-      else if (rem == 3)
-        raw = (float) ((uint32_t) d[0] << 16 | (uint32_t) d[1] << 8 | d[2]);
-      break;
-
-    case GeaDecodeType::UINT32_LE:
-      raw = (rem >= 4)
-          ? (float) ((uint32_t) d[3] << 24 | (uint32_t) d[2] << 16 | (uint32_t) d[1] << 8 | d[0])
-          : 0.0f;
-      break;
-
-    case GeaDecodeType::INT8:
-      raw = (rem >= 1) ? (float) (int8_t) d[0] : 0.0f;
-      break;
-
-    case GeaDecodeType::INT16_BE:
-      raw = (rem >= 2) ? (float) (int16_t) ((uint16_t) d[0] << 8 | d[1]) : 0.0f;
-      break;
-
-    case GeaDecodeType::INT16_LE:
-      raw = (rem >= 2) ? (float) (int16_t) ((uint16_t) d[1] << 8 | d[0]) : 0.0f;
-      break;
-
-    case GeaDecodeType::INT32_BE:
-      raw = (rem >= 4)
-          ? (float) (int32_t) ((uint32_t) d[0] << 24 | (uint32_t) d[1] << 16 | (uint32_t) d[2] << 8 | d[3])
-          : 0.0f;
-      break;
-
-    case GeaDecodeType::INT32_LE:
-      raw = (rem >= 4)
-          ? (float) (int32_t) ((uint32_t) d[3] << 24 | (uint32_t) d[2] << 16 | (uint32_t) d[1] << 8 | d[0])
-          : 0.0f;
-      break;
-
-    case GeaDecodeType::BOOL:
-      // BOOL is unscaled — masked bit, returned as 0 or 1.
-      return (rem >= 1) ? ((d[0] & bitmask_) ? 1.0f : 0.0f) : 0.0f;
-
-    default:
-      return 0.0f;
-  }
-  return raw * multiplier_ + offset_;
+  return decoder::decode_float(decode_, data, byte_offset_, bitmask_, multiplier_, offset_);
 }
 
 std::string GEAEntity::decode_as_hex(const std::vector<uint8_t> &data) const {
-  if (data.empty())
-    return "0x";
-  std::string result = "0x";
-  char hex[3];
-  for (uint8_t b : data) {
-    snprintf(hex, sizeof(hex), "%02X", b);
-    result += hex;
-  }
-  return result;
+  return decoder::decode_hex(data);
 }
 
 void GEAEntity::encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const {
-  uint8_t n = data_size_;
-  if (n == 0) {
-    switch (decode_) {
-      case GeaDecodeType::UINT16_BE:
-      case GeaDecodeType::INT16_BE:
-      case GeaDecodeType::UINT16_LE:
-      case GeaDecodeType::INT16_LE:
-        n = 2;
-        break;
-      case GeaDecodeType::UINT32_BE:
-      case GeaDecodeType::INT32_BE:
-      case GeaDecodeType::UINT32_LE:
-      case GeaDecodeType::INT32_LE:
-        n = 4;
-        break;
-      default:
-        n = 1;
-        break;
-    }
-  }
-  bool le = false;
-  switch (decode_) {
-    case GeaDecodeType::UINT16_LE:
-    case GeaDecodeType::INT16_LE:
-    case GeaDecodeType::UINT32_LE:
-    case GeaDecodeType::INT32_LE:
-      le = true;
-      break;
-    default:
-      break;
-  }
-  if (le) {
-    for (uint8_t i = 0; i < n; i++)
-      out.push_back((val >> (i * 8)) & 0xFF);
-  } else {
-    for (int i = n - 1; i >= 0; i--)
-      out.push_back((val >> (i * 8)) & 0xFF);
-  }
+  auto bytes = decoder::encode_bytes(decode_, data_size_, val);
+  out.insert(out.end(), bytes.begin(), bytes.end());
 }
 
 // =============================================================================

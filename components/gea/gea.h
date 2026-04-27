@@ -4,6 +4,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/automation.h"
 #include "esphome/components/uart/uart.h"
+#include "decoder.h"
 #include <string>
 #include <vector>
 #include <deque>
@@ -39,24 +40,8 @@ static constexpr uint8_t CMD_PUBLICATION     = 0xA6;  // appliance broadcasts al
 static constexpr uint8_t CMD_PUB_ACK         = 0xA7;  // publication acknowledgement
 static constexpr uint8_t CMD_SUB_HOST_STARTUP = 0xA8;  // appliance announces it just came online
 
-// ---------------------------------------------------------------------------
-// Decode types for ERD data interpretation
-// ---------------------------------------------------------------------------
-enum GeaDecodeType {
-  UINT8,
-  UINT16_BE,
-  UINT16_LE,
-  UINT32_BE,
-  UINT32_LE,
-  INT8,
-  INT16_BE,
-  INT16_LE,
-  INT32_BE,
-  INT32_LE,
-  BOOL,
-  RAW,
-  ASCII,
-};
+// GeaDecodeType is defined in decoder.h so the decode logic is testable
+// without ESPHome dependencies.
 
 class GEAComponent;
 
@@ -288,16 +273,8 @@ class ErdChangeTrigger : public Trigger<> {
   // Caller must ensure old_data is non-empty (no first-seen evaluation).
   bool evaluate(const std::vector<uint8_t> &old_data,
                 const std::vector<uint8_t> &new_data) const {
-    if (byte_offset_ >= new_data.size() || byte_offset_ >= old_data.size())
-      return false;
-    uint8_t old_masked = old_data[byte_offset_] & bitmask_;
-    uint8_t new_masked = new_data[byte_offset_] & bitmask_;
-    switch (edge_) {
-      case RISING:  return old_masked == 0 && new_masked != 0;
-      case FALLING: return old_masked != 0 && new_masked == 0;
-      case ANY:     return old_masked != new_masked;
-    }
-    return false;
+    return decoder::evaluate_edge(static_cast<decoder::Edge>(edge_),
+                                  old_data, new_data, byte_offset_, bitmask_);
   }
 
  protected:

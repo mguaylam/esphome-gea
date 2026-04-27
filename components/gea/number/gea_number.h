@@ -22,8 +22,7 @@ class GEANumber : public number::Number, public GEAEntity, public Component {
   void control(float value) override {
     // Reverse the multiplier/offset transform applied on read so the wire
     // value matches what the appliance expects.
-    float raw = (multiplier_ != 0.0f) ? ((value - offset_) / multiplier_) : 0.0f;
-    auto val = (uint32_t) raw;
+    auto val = decoder::reverse_scale(value, multiplier_, offset_);
     std::vector<uint8_t> data;
     encode_to_bytes(val, data);
     if (parent_)
