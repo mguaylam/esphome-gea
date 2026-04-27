@@ -1,7 +1,9 @@
 # esphome-gea Documentation
 
-The `gea` external component talks to GE appliances over the **GEA3 serial bus**
-and exposes their state to Home Assistant as standard ESPHome entities.
+The `gea` external component talks to GE appliances over the **GEA2 or GEA3
+serial bus** and exposes their state to Home Assistant as standard ESPHome
+entities. Set `protocol: gea2` (older appliances, 19200 baud) or use the
+default `gea3` (newer appliances, 230400 baud).
 
 If this is your first time, start with the [Quick start](../README.md#quick-start)
 in the project README, then come back here for the full configuration reference.
@@ -34,13 +36,14 @@ in the project README, then come back here for the full configuration reference.
 
 ## Reference
 
-- [Protocol & internals](protocol.md) — GEA3 framing, command codes, connection lifecycle, request reliability.
+- [Protocol & internals](protocol.md) — GEA2 / GEA3 framing, command codes, connection lifecycle, request reliability.
 - [Testing](testing.md) — multi-platform compile-time integration tests.
 
 ## Hardware adapters
 
 The component is hardware-agnostic — any TTL-level UART breakout to the
-appliance's GEA3 jack works. Two known-good options:
+appliance's GEA jack works (the same boards support both GEA2 and GEA3). Two
+known-good options:
 
 - **[mulcmu/esphome-ge-laundry-uart](https://github.com/mulcmu/esphome-ge-laundry-uart)**
   — open hardware (KiCad sources + gerbers). Recommended if you're comfortable

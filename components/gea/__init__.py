@@ -108,8 +108,15 @@ CONF_ON_ERD_CHANGE = "on_erd_change"
 CONF_EDGE = "edge"
 CONF_MULTIPLIER = "multiplier"
 CONF_OFFSET = "offset"
+CONF_PROTOCOL = "protocol"
+CONF_POLL_INTERVAL = "poll_interval"
 
 GeaDecodeType = gea_ns.enum("GeaDecodeType")
+GeaProtocol = gea_ns.enum("Protocol", is_class=True)
+PROTOCOLS = {
+    "gea2": GeaProtocol.GEA2,
+    "gea3": GeaProtocol.GEA3,
+}
 
 ErdChangeEdge = ErdChangeTrigger.enum("Edge")
 EDGES = {
@@ -169,31 +176,50 @@ def validate_nonzero_multiplier(value):
     return f
 
 
-CONFIG_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(GEAComponent),
-        # dest_address is optional — omit to enable auto-detect (recommended for
-        # single-appliance setups; the address is learned from the first valid packet).
-        cv.Optional(CONF_DEST_ADDRESS): cv.hex_uint8_t,
-        cv.Optional(CONF_SRC_ADDRESS, default=0xBB): cv.hex_uint8_t,
-        # Set to true to embed the GE public ERD lookup table (~75 KB flash).
-        # Enables ERD name, type, and decoded value in dump_config output.
-        cv.Optional("erd_lookup", default=False): cv.boolean,
-        # Automation: fire on bitmask-edge transitions within an ERD publication.
-        # First publication after boot establishes a silent baseline (no trigger).
-        cv.Optional(CONF_ON_ERD_CHANGE): automation.validate_automation(
-            {
-                cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ErdChangeTrigger),
-                cv.Required(CONF_ERD): cv.hex_uint16_t,
-                cv.Optional(CONF_BYTE_OFFSET, default=0): cv.uint8_t,
-                cv.Optional(CONF_BITMASK, default=0xFF): cv.hex_uint8_t,
-                cv.Optional(CONF_EDGE, default="rising"): cv.one_of(
-                    *EDGES, lower=True
-                ),
-            }
-        ),
-    }
-).extend(uart.UART_DEVICE_SCHEMA)
+def _validate_gea2_requires_dest(config):
+    """GEA2 has no spontaneous traffic, so auto-detect can't work — require dest_address."""
+    if config[CONF_PROTOCOL] == "gea2" and CONF_DEST_ADDRESS not in config:
+        raise cv.Invalid(
+            "protocol: gea2 requires dest_address (auto-detect needs spontaneous "
+            "traffic that GEA2 doesn't produce). Typical value: 0xC0."
+        )
+    return config
+
+
+CONFIG_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(GEAComponent),
+            # gea3 (default): full-duplex, 230400 baud, subscribe-all + publications.
+            # gea2: half-duplex, 19200 baud, no subscriptions — values are polled.
+            cv.Optional(CONF_PROTOCOL, default="gea3"): cv.one_of(*PROTOCOLS, lower=True),
+            # dest_address is optional for GEA3 (auto-detected from first packet) but
+            # required for GEA2 since the appliance never speaks unprompted.
+            cv.Optional(CONF_DEST_ADDRESS): cv.hex_uint8_t,
+            cv.Optional(CONF_SRC_ADDRESS, default=0xBB): cv.hex_uint8_t,
+            # GEA2-only: how long to wait between successive ERD reads in the
+            # round-robin poller. Ignored for GEA3.
+            cv.Optional(CONF_POLL_INTERVAL, default="2s"): cv.positive_time_period_milliseconds,
+            # Set to true to embed the GE public ERD lookup table (~75 KB flash).
+            # Enables ERD name, type, and decoded value in dump_config output.
+            cv.Optional("erd_lookup", default=False): cv.boolean,
+            # Automation: fire on bitmask-edge transitions within an ERD publication.
+            # First publication after boot establishes a silent baseline (no trigger).
+            cv.Optional(CONF_ON_ERD_CHANGE): automation.validate_automation(
+                {
+                    cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ErdChangeTrigger),
+                    cv.Required(CONF_ERD): cv.hex_uint16_t,
+                    cv.Optional(CONF_BYTE_OFFSET, default=0): cv.uint8_t,
+                    cv.Optional(CONF_BITMASK, default=0xFF): cv.hex_uint8_t,
+                    cv.Optional(CONF_EDGE, default="rising"): cv.one_of(
+                        *EDGES, lower=True
+                    ),
+                }
+            ),
+        }
+    ).extend(uart.UART_DEVICE_SCHEMA),
+    _validate_gea2_requires_dest,
+)
 
 
 async def to_code(config):
@@ -205,11 +231,14 @@ async def to_code(config):
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)
 
+    cg.add(var.set_protocol(PROTOCOLS[config[CONF_PROTOCOL]]))
+
     if CONF_DEST_ADDRESS in config:
         cg.add(var.set_dest_address(config[CONF_DEST_ADDRESS]))
-    # else: auto_detect_ stays true, address is learned at runtime
+    # else: auto_detect_ stays true (GEA3 only), address is learned at runtime
 
     cg.add(var.set_src_address(config[CONF_SRC_ADDRESS]))
+    cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
 
     for conf in config.get(CONF_ON_ERD_CHANGE, []):
         trigger = cg.new_Pvariable(

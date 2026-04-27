@@ -2,14 +2,38 @@
 
 ## Nothing happens, no logs from the GEA component
 
-- Confirm `baud_rate: 230400` (not 19,200 — that's the older GEA2 protocol,
-  not supported).
+- Confirm the `baud_rate` matches the protocol: **230400** for GEA3,
+  **19200** for GEA2. A baud mismatch produces total silence — no CRC
+  errors, no packets, nothing.
+- Confirm the `protocol:` setting matches the appliance. GEA3 is the default
+  and is wrong for older appliances. If `protocol: gea2` is set,
+  `dest_address:` must also be set (the hub can't auto-detect on GEA2).
 - Check TX/RX aren't swapped. The ESP's TX goes to the appliance's RX and
   vice versa.
 - Verify GND is connected between the ESP and the appliance.
 - Add a `is_bus_connected()` lambda binary_sensor (see
   [Diagnostics](diagnostics.md)) — `false` means no valid packet has arrived
   in the last 30 s.
+
+## GEA2-specific: entities stay "unknown" even after a poll cycle
+
+- The default `poll_interval` is 2 s. With many declared ERDs the full
+  refresh cycle takes `N × poll_interval` — give it a full minute before
+  assuming an ERD doesn't respond.
+- Make sure `dest_address` actually matches your appliance. GEA3 can
+  auto-detect, but GEA2 cannot — a wrong dest means every read times out
+  silently. `0xC0` is the most common value (washer/dryer/dishwasher main
+  board).
+- If you have an ERD declared but no entity uses it, it won't be polled —
+  the poll list is built from referenced ERDs only.
+
+## "Subscribe-All Ack" never arrives (GEA3 only)
+
+- Some appliances need the bus to settle first. The hub already retries
+  every 1 s in `SUBSCRIBING` state — wait a few seconds.
+- If the appliance is actually a GEA2 device, `subscribe-all` will never be
+  acknowledged because GEA2 has no such command. Switch to
+  `protocol: gea2`.
 
 ## Entities created but always show "unknown"
 

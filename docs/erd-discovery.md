@@ -2,17 +2,23 @@
 
 An **ERD** (Entity Reference Designator) is a 16-bit identifier for a data
 register on the appliance — a temperature, machine state, or cycle selection.
-You don't have to guess them: on boot the component sends a *subscribe-all*
-command and the appliance dumps every ERD it supports.
 
-Anything not matched to a configured entity is logged at `INFO` level:
+> **Auto-discovery is GEA3-only.** GEA3 appliances respond to a
+> *subscribe-all* command on boot and dump every ERD they support. GEA2
+> appliances have no equivalent — they only answer when polled, so the hub
+> can only see ERDs you've explicitly declared via an entity or
+> `on_erd_change`. For GEA2 the workflow below is replaced with: declare a
+> raw `text_sensor` per candidate ERD, observe the polled value, then refine.
+
+On GEA3, anything not matched to a configured entity is logged at `INFO`
+level:
 
 ```text
 [I][gea:042]: Discovered ERD 0x2007: 00 00
 [I][gea:042]: Discovered ERD 0x200A: 00 00 00 00
 ```
 
-## Workflow for a new appliance
+## Workflow for a new GEA3 appliance
 
 1. **Flash a minimal config** with just the `gea:` hub and no entities:
 

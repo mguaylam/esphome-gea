@@ -236,13 +236,14 @@ bool GEAComponent::has_inflight_cmd_(uint8_t cmd) const {
 }
 
 // Build and send the currently-pending request on the wire.  Called on first
-// send and on every retry — the same req_id is reused so a late response from
-// a prior attempt still matches.
+// send and on every retry — the same req_id is reused (GEA3) so a late
+// response from a prior attempt still matches. GEA2 has no req_id field.
 void GEAComponent::transmit_pending_() {
   std::vector<uint8_t> payload;
   payload.reserve(2 + pending_.body.size());
   payload.push_back(pending_.cmd);
-  payload.push_back(pending_.req_id);
+  if (protocol_ == Protocol::GEA3)
+    payload.push_back(pending_.req_id);
   payload.insert(payload.end(), pending_.body.begin(), pending_.body.end());
   send_packet_(pending_.dest, payload);
   pending_.sent_at_ms = millis();
@@ -265,29 +266,57 @@ bool GEAComponent::response_matches_pending_(uint8_t response_cmd, uint8_t req_i
   return response_cmd == (pending_.cmd | 0x01);
 }
 
+// GEA2 has no request_id field; matching is by command code (request and
+// response share the same code in GEA2) and ERD address. Single-in-flight
+// makes this unambiguous.
+bool GEAComponent::gea2_response_matches_pending_(uint8_t response_cmd, uint16_t erd) const {
+  if (!pending_active_)
+    return false;
+  if (pending_.cmd != response_cmd)
+    return false;
+  // GEA2 body layout: [count=1][erd_h][erd_l][...]
+  if (pending_.body.size() < 3)
+    return false;
+  uint16_t pending_erd = ((uint16_t) pending_.body[1] << 8) | pending_.body[2];
+  return pending_erd == erd;
+}
+
 // =============================================================================
 // GEAComponent — ESPHome lifecycle
 // =============================================================================
 
 void GEAComponent::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up GEA3 component...");
+  ESP_LOGCONFIG(TAG, "Setting up GEA component (protocol=%s)...",
+                protocol_ == Protocol::GEA2 ? "GEA2" : "GEA3");
   rx_buf_.reserve(64);
-  if (auto_detect_) {
-    ESP_LOGI(TAG, "Address auto-detect enabled — sending subscribe-all to broadcast");
-    dest_addr_ = GEA_BROADCAST_ADDR;
+  if (protocol_ == Protocol::GEA2) {
+    // GEA2 has no subscribe-all and no spontaneous publications. The Python
+    // schema enforces dest_address is set, so auto_detect_ is irrelevant here.
+    auto_detect_ = false;
+    ESP_LOGI(TAG, "GEA2 mode — values will be polled (interval=%u ms)", poll_interval_ms_);
+    last_poll_ms_ = millis();
+  } else {
+    if (auto_detect_) {
+      ESP_LOGI(TAG, "Address auto-detect enabled — sending subscribe-all to broadcast");
+      dest_addr_ = GEA_BROADCAST_ADDR;
+    }
+    send_subscribe_all_(0x00);  // type=add
+    sub_retry_ms_ = millis();
   }
-  send_subscribe_all_(0x00);  // type=add
-  sub_retry_ms_ = millis();
 }
 
 void GEAComponent::dump_config() {
-  ESP_LOGCONFIG(TAG, "GEA3 Component:");
+  ESP_LOGCONFIG(TAG, "GEA Component:");
+  ESP_LOGCONFIG(TAG, "  Protocol: %s", protocol_ == Protocol::GEA2 ? "GEA2" : "GEA3");
   if (auto_detect_) {
     ESP_LOGCONFIG(TAG, "  Dest address: auto-detect (current: 0x%02X)", dest_addr_);
   } else {
     ESP_LOGCONFIG(TAG, "  Dest address: 0x%02X", dest_addr_);
   }
   ESP_LOGCONFIG(TAG, "  Src address:  0x%02X", src_addr_);
+  if (protocol_ == Protocol::GEA2) {
+    ESP_LOGCONFIG(TAG, "  Poll interval: %u ms", poll_interval_ms_);
+  }
   ESP_LOGCONFIG(TAG, "  Registered entities: %zu", entities_.size());
   for (auto *e : entities_) {
     ESP_LOGCONFIG(TAG, "    ERD 0x%04X", e->get_erd());
@@ -446,33 +475,44 @@ void GEAComponent::loop() {
              is_bus_connected() ? "CONNECTED" : "no valid packets yet");
   }
 
-  // Subscription state machine:
-  //   SUBSCRIBING: send subscribe-all (type=add) every 1 s until acknowledged.
-  //   SUBSCRIBED:  send subscribe-all (type=retain) every 30 s as keep-alive.
-  //
-  // Primary reconnection trigger is the 0xA8 "subscription host startup"
-  // packet the appliance emits on boot (see process_packet_).  As a fallback
-  // for cases where that packet is missed or the bus stays connected via
-  // other traffic, we also resubscribe on a bus silent→active transition.
-  bool connected = is_bus_connected();
-  uint32_t now_sub = millis();
-  if (sub_state_ == SubState::SUBSCRIBED && !was_connected_ && connected) {
-    ESP_LOGI(TAG, "Bus reconnected — resubscribing");
-    sub_state_ = SubState::SUBSCRIBING;
-    sub_retry_ms_ = now_sub - 1000;  // trigger immediate retry on next pass
-  }
-  was_connected_ = connected;
-
-  if (sub_state_ == SubState::SUBSCRIBING) {
-    if (now_sub - sub_retry_ms_ >= 1000) {
-      send_subscribe_all_(0x00);
-      sub_retry_ms_ = now_sub;
+  if (protocol_ == Protocol::GEA2) {
+    // GEA2: no subscriptions/publications. Fire one read at a time on a
+    // round-robin schedule. The request queue serializes everything, so a
+    // user-initiated write naturally interleaves between polls.
+    uint32_t now_poll = millis();
+    if (now_poll - last_poll_ms_ >= poll_interval_ms_) {
+      poll_next_();
+      last_poll_ms_ = now_poll;
     }
   } else {
-    if (now_sub - sub_retry_ms_ >= 30000) {
-      ESP_LOGV(TAG, "Subscription keep-alive (retain)");
-      send_subscribe_all_(0x01);
-      sub_retry_ms_ = now_sub;
+    // GEA3 subscription state machine:
+    //   SUBSCRIBING: send subscribe-all (type=add) every 1 s until acknowledged.
+    //   SUBSCRIBED:  send subscribe-all (type=retain) every 30 s as keep-alive.
+    //
+    // Primary reconnection trigger is the 0xA8 "subscription host startup"
+    // packet the appliance emits on boot (see process_packet_).  As a fallback
+    // for cases where that packet is missed or the bus stays connected via
+    // other traffic, we also resubscribe on a bus silent→active transition.
+    bool connected = is_bus_connected();
+    uint32_t now_sub = millis();
+    if (sub_state_ == SubState::SUBSCRIBED && !was_connected_ && connected) {
+      ESP_LOGI(TAG, "Bus reconnected — resubscribing");
+      sub_state_ = SubState::SUBSCRIBING;
+      sub_retry_ms_ = now_sub - 1000;  // trigger immediate retry on next pass
+    }
+    was_connected_ = connected;
+
+    if (sub_state_ == SubState::SUBSCRIBING) {
+      if (now_sub - sub_retry_ms_ >= 1000) {
+        send_subscribe_all_(0x00);
+        sub_retry_ms_ = now_sub;
+      }
+    } else {
+      if (now_sub - sub_retry_ms_ >= 30000) {
+        ESP_LOGV(TAG, "Subscription keep-alive (retain)");
+        send_subscribe_all_(0x01);
+        sub_retry_ms_ = now_sub;
+      }
     }
   }
 
@@ -512,21 +552,99 @@ void GEAComponent::register_entity(GEAEntity *entity) {
   entities_.push_back(entity);
 }
 
+// Body layouts (sit after the [CMD] byte on the wire; transmit_pending_ also
+// inserts [REQ_ID] for GEA3 only):
+//   GEA3 read:  body = [erd_h][erd_l]
+//   GEA3 write: body = [erd_h][erd_l][size][data...]
+//   GEA2 read:  body = [count=1][erd_h][erd_l]
+//   GEA2 write: body = [count=1][erd_h][erd_l][size][data...]
 void GEAComponent::read_erd(uint16_t erd) {
-  std::vector<uint8_t> body = {(uint8_t)(erd >> 8), (uint8_t)(erd & 0xFF)};
-  enqueue_request_(CMD_READ_REQUEST, std::move(body));
+  std::vector<uint8_t> body;
+  uint8_t cmd;
+  if (protocol_ == Protocol::GEA2) {
+    body = {0x01, (uint8_t)(erd >> 8), (uint8_t)(erd & 0xFF)};
+    cmd = CMD_GEA2_READ;
+  } else {
+    body = {(uint8_t)(erd >> 8), (uint8_t)(erd & 0xFF)};
+    cmd = CMD_READ_REQUEST;
+  }
+  enqueue_request_(cmd, std::move(body));
   ESP_LOGD(TAG, "Queued read ERD 0x%04X", erd);
 }
 
 void GEAComponent::write_erd(uint16_t erd, const std::vector<uint8_t> &data) {
   std::vector<uint8_t> body;
-  body.reserve(3 + data.size());
-  body.push_back((uint8_t)(erd >> 8));
-  body.push_back((uint8_t)(erd & 0xFF));
-  body.push_back((uint8_t)data.size());
-  body.insert(body.end(), data.begin(), data.end());
-  enqueue_request_(CMD_WRITE_REQUEST, std::move(body));
+  uint8_t cmd;
+  if (protocol_ == Protocol::GEA2) {
+    body.reserve(4 + data.size());
+    body.push_back(0x01);  // erd_count
+    body.push_back((uint8_t)(erd >> 8));
+    body.push_back((uint8_t)(erd & 0xFF));
+    body.push_back((uint8_t) data.size());
+    body.insert(body.end(), data.begin(), data.end());
+    cmd = CMD_GEA2_WRITE;
+  } else {
+    body.reserve(3 + data.size());
+    body.push_back((uint8_t)(erd >> 8));
+    body.push_back((uint8_t)(erd & 0xFF));
+    body.push_back((uint8_t) data.size());
+    body.insert(body.end(), data.begin(), data.end());
+    cmd = CMD_WRITE_REQUEST;
+  }
+  enqueue_request_(cmd, std::move(body));
   ESP_LOGD(TAG, "Queued write ERD 0x%04X (%zu bytes)", erd, data.size());
+}
+
+// =============================================================================
+// GEAComponent — GEA2 polling
+// =============================================================================
+
+// Build the round-robin poll list once entities have all registered. Called
+// lazily on the first poll. Includes ERDs from registered entities and from
+// on_erd_change triggers, deduplicated.
+void GEAComponent::build_poll_list_() {
+  poll_erds_.clear();
+  for (auto *e : entities_) {
+    uint16_t erd = e->get_erd();
+    bool seen = false;
+    for (uint16_t existing : poll_erds_) {
+      if (existing == erd) {
+        seen = true;
+        break;
+      }
+    }
+    if (!seen)
+      poll_erds_.push_back(erd);
+  }
+  for (auto *t : erd_change_triggers_) {
+    uint16_t erd = t->get_erd();
+    bool seen = false;
+    for (uint16_t existing : poll_erds_) {
+      if (existing == erd) {
+        seen = true;
+        break;
+      }
+    }
+    if (!seen)
+      poll_erds_.push_back(erd);
+  }
+  poll_list_built_ = true;
+  ESP_LOGI(TAG, "GEA2 poll list built: %zu unique ERDs", poll_erds_.size());
+}
+
+// Enqueue a read for the next ERD in the round-robin. Skips silently if the
+// queue is non-empty (a write or prior poll is still in flight) so that polls
+// don't pile up behind user-initiated traffic.
+void GEAComponent::poll_next_() {
+  if (!poll_list_built_)
+    build_poll_list_();
+  if (poll_erds_.empty())
+    return;
+  if (pending_active_ || !request_queue_.empty())
+    return;
+  uint16_t erd = poll_erds_[poll_index_];
+  poll_index_ = (poll_index_ + 1) % poll_erds_.size();
+  read_erd(erd);
 }
 
 // =============================================================================
@@ -720,6 +838,68 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
         ESP_LOGW(TAG, "Subscribe-all rejected, result=0x%02X", result);
       }
       finish_pending_();
+      break;
+    }
+
+    case CMD_GEA2_READ: {
+      // GEA2 read response (request and response share the same code 0xF0).
+      // Layout (offsets into pkt after DEST/LEN/SRC):
+      //   3=cmd, 4=erd_count, 5=erd_h, 6=erd_l, 7=size, 8..= data, then CRC
+      // Minimum size: 3 (header) + 4 (cmd, count, erd_h, erd_l) + 1 (size) + 2 (CRC)
+      if (protocol_ != Protocol::GEA2)
+        break;
+      if (pkt.size() < 10)
+        break;
+      uint8_t erd_count = pkt[4];
+      if (erd_count != 1) {
+        ESP_LOGW(TAG, "GEA2 read response with erd_count=%u not supported", erd_count);
+        break;
+      }
+      uint16_t erd = (uint16_t) pkt[5] << 8 | pkt[6];
+      uint8_t size = pkt[7];
+      if (pkt.size() < (size_t)(10 + size))
+        break;
+      if (!gea2_response_matches_pending_(cmd, erd)) {
+        ESP_LOGV(TAG, "Unmatched GEA2 read response for ERD 0x%04X", erd);
+        break;
+      }
+      std::vector<uint8_t> data(pkt.begin() + 8, pkt.begin() + 8 + size);
+      {
+        std::string hex;
+        char buf[3];
+        for (uint8_t b : data) {
+          snprintf(buf, sizeof(buf), "%02X", b);
+          hex += buf;
+        }
+        ESP_LOGI(TAG, "Read ERD 0x%04X OK (%zu B): %s", erd, data.size(), hex.c_str());
+      }
+      log_discovery_(erd, data);
+      dispatch_erd_(erd, data);
+      finish_pending_();
+      break;
+    }
+
+    case CMD_GEA2_WRITE: {
+      // GEA2 write response: [cmd=0xF1][erd_count=1][erd_h][erd_l] (no result code).
+      // Receiving the echoed write response means the appliance accepted it.
+      // Min size: 3 (header) + 4 (cmd, count, erd_h, erd_l) + 2 (CRC) = 9.
+      if (protocol_ != Protocol::GEA2)
+        break;
+      if (pkt.size() < 9)
+        break;
+      uint8_t erd_count = pkt[4];
+      if (erd_count != 1)
+        break;
+      uint16_t erd = (uint16_t) pkt[5] << 8 | pkt[6];
+      if (!gea2_response_matches_pending_(cmd, erd)) {
+        ESP_LOGV(TAG, "Unmatched GEA2 write response for ERD 0x%04X", erd);
+        break;
+      }
+      ESP_LOGD(TAG, "Write ERD 0x%04X OK", erd);
+      finish_pending_();
+      // Re-read the ERD so entity state reflects the committed value without
+      // waiting for the next poll cycle.
+      read_erd(erd);
       break;
     }
 

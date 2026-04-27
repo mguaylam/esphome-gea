@@ -1,0 +1,19 @@
+# Compile test — ESP32 with ESP-IDF framework, GEA2 protocol.
+# Run: esphome compile tests/components/gea/test.esp32-idf.gea2.yaml
+
+esphome:
+  name: gea-test-gea2
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+uart:
+  id: uart_gea
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 19200
+
+packages:
+  common: !include common.gea2.yaml

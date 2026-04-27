@@ -4,11 +4,16 @@ This page documents how the component talks to the appliance. You don't need
 any of this to use the component — but it's useful when reverse-engineering a
 new appliance or debugging unusual behaviour on the bus.
 
+The component supports both **GEA3** (newer appliances, full-duplex,
+230400 baud) and **GEA2** (older appliances, half-duplex, 19200 baud). The
+two protocols share the same wire framing — only the command codes and the
+ERD payload format differ.
+
 ## Frame format
 
-GEA3 is a full-duplex serial protocol. Each frame on the wire looks like:
+Each frame on the wire looks like:
 
-![GEA3 Frame](frame.svg)
+![GEA Frame](frame.svg)
 
 - **STX / ETX:** Frame delimiters (`0xE2` / `0xE3`).
 - **LEN:** Total logical length = `7 + len(payload)`.
@@ -18,7 +23,13 @@ GEA3 is a full-duplex serial protocol. Each frame on the wire looks like:
   `0xE0` (the *escape* byte). The receiver state machine strips the escape on
   decode.
 
+The framing is **identical** between GEA2 and GEA3 — same delimiters, same
+escape rule, same CRC seed and polynomial. What changes is what goes inside
+the payload.
+
 ## Command codes
+
+### GEA3 (`0xA0`–`0xA8`)
 
 | Command | Code | Direction | Purpose |
 |---------|------|-----------|---------|
@@ -33,7 +44,38 @@ GEA3 is a full-duplex serial protocol. Each frame on the wire looks like:
 | Subscription Host Startup | `0xA8` | ← Appliance | Appliance just came online |
 | ACK | `0xE1` | ↔ Both | Single-byte acknowledgement |
 
-## Typical exchange
+GEA3 payloads carry an explicit `request_id` byte that the appliance echoes
+back on the matching response.
+
+### GEA2 (`0xF0` / `0xF1`)
+
+| Command | Code | Direction | Purpose |
+|---------|------|-----------|---------|
+| Read Request / Response | `0xF0` | ↔ Both | Same code in both directions; direction is implied by `dest`. |
+| Write Request / Response | `0xF1` | ↔ Both | Same as above. |
+| ACK | `0xE1` | ↔ Both | Single-byte acknowledgement |
+
+GEA2 has **no subscriptions, no publications, and no `request_id`**. There
+is no equivalent of the GEA3 `0xA4`–`0xA8` family. The hub matches a
+response to the pending request by ERD address — which works because only
+one request is on the wire at a time.
+
+### ERD payload layout
+
+This is where GEA2 and GEA3 actually diverge:
+
+| | GEA3 read | GEA2 read |
+|---|---|---|
+| Body | `[req_id][erd_h][erd_l]` | `[count=1][erd_h][erd_l]` |
+
+| | GEA3 write | GEA2 write |
+|---|---|---|
+| Body | `[req_id][erd_h][erd_l][size][data…]` | `[count=1][erd_h][erd_l][size][data…]` |
+
+GEA2 prefixes the body with a single-byte ERD count (always `1` here) and
+omits the request ID. GEA3 includes the request ID and no count.
+
+## Typical exchange (GEA3)
 
 ```mermaid
 sequenceDiagram
@@ -65,7 +107,32 @@ sequenceDiagram
     E-->>A: Publication Ack 0xA7
 ```
 
-## Connection lifecycle
+## Typical exchange (GEA2)
+
+GEA2 has no subscriptions, so the hub polls each declared ERD in turn. Since
+the bus is half-duplex the hub also sees its own transmission echoed back —
+those echoes are filtered out by checking the `dest` field.
+
+```mermaid
+sequenceDiagram
+    participant E as ESP32
+    participant A as GE Appliance
+
+    Note over E,A: Round-robin polling — every poll_interval (default 2 s)
+    E->>A: Read Request 0xF0 [count=1, ERD=0x2012]
+    A-->>E: ACK 0xE1
+    A->>E: Read Response 0xF0 [count=1, ERD=0x2012, size, data]
+    E-->>A: ACK 0xE1
+
+    Note over E,A: Write from Home Assistant — interleaves with the poll loop
+    E->>A: Write Request 0xF1 [count=1, ERD=0x3230, size=1, val=0x01]
+    A-->>E: ACK 0xE1
+    A->>E: Write Response 0xF1 [count=1, ERD=0x3230]
+    E-->>A: ACK 0xE1
+    Note over E: Hub immediately re-reads 0x3230\nso entity state mirrors the appliance.
+```
+
+## Connection lifecycle (GEA3)
 
 The component uses a two-state subscription machine:
 
@@ -106,6 +173,23 @@ Transition back to **SUBSCRIBING** happens on either:
   `is_bus_connected()` flips from `false` to `true`. Covers cases where the
   startup packet is missed.
 
+## Connection lifecycle (GEA2)
+
+There is no subscription state machine on GEA2. Instead, the hub:
+
+1. Builds a deduplicated list of every ERD referenced by an entity or by an
+   `on_erd_change` automation.
+2. Round-robin polls one ERD per `poll_interval`, single-in-flight, sharing
+   the same retry queue as user-initiated writes.
+3. Skips a tick when the queue is busy — so a write doesn't get stuck behind
+   the poll cycle.
+4. After a successful write, immediately re-reads the same ERD so the
+   matching entity reflects the appliance's new state without waiting for
+   the next poll.
+
+Bus health is still derived from `last_rx_ms_`, so `is_bus_connected()` works
+identically on both protocols.
+
 ## Request reliability
 
 Every outgoing request (read, write, subscribe-all) goes through a
@@ -117,17 +201,22 @@ single-in-flight queue with deterministic retry:
 | Max retries | **10** |
 | Total worst-case | **~2.75 s** before a request is dropped |
 
-- **Serialization** — only one request is on the wire at a time, so
-  `request_id` matches between request and response without ambiguity.
+- **Serialization** — only one request is on the wire at a time, so on GEA3
+  the `request_id` matches between request and response without ambiguity,
+  and on GEA2 the ERD address alone is enough to identify the pending
+  exchange.
 - **Retry on timeout** — if no matching response arrives within 250 ms, the
-  same `request_id` is resent. A late response from a prior attempt still
+  same request is resent. A late response from a prior attempt still
   matches.
-- **Request-ID matching** — incoming responses whose `request_id` doesn't
-  match the pending request are ignored; the pending request stays armed
-  until it either matches a response or exhausts its retries.
+- **Response matching** —
+  - **GEA3**: incoming responses whose `request_id` doesn't match the
+    pending request are ignored.
+  - **GEA2**: incoming responses whose ERD doesn't match the pending request
+    are ignored. Self-echoes on the half-duplex bus are filtered earlier by
+    the `dest` check, so they never reach this stage.
 - **Unsolicited frames bypass the queue** — ACKs, publications, publication
   ACKs, and subscription host startup packets are not request/response pairs
-  and are processed independently.
+  and are processed independently. (GEA2 has none of these.)
 
 Writes initiated from Home Assistant are **non-blocking**: the entity returns
 immediately and the queue transmits in the background. A dropped write

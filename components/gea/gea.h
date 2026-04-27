@@ -41,6 +41,22 @@ static constexpr uint8_t CMD_PUB_ACK = 0xA7;           // publication acknowledg
 static constexpr uint8_t CMD_SUB_HOST_STARTUP = 0xA8;  // appliance announces it just came online
 
 // ---------------------------------------------------------------------------
+// GEA2 ERD API command bytes (request and response share the same code; the
+// distinction is direction. There is no subscription mechanism — values must
+// be polled by reading individual ERDs.)
+// ---------------------------------------------------------------------------
+static constexpr uint8_t CMD_GEA2_READ = 0xF0;   // read request and read response
+static constexpr uint8_t CMD_GEA2_WRITE = 0xF1;  // write request and write response
+
+// ---------------------------------------------------------------------------
+// Protocol selector
+// ---------------------------------------------------------------------------
+enum class Protocol : uint8_t {
+  GEA2,  // half-duplex, 19200 baud, polled (no subscriptions/publications)
+  GEA3,  // full-duplex, 230400 baud, subscribe-all + publications
+};
+
+// ---------------------------------------------------------------------------
 // Decode types for ERD data interpretation
 // ---------------------------------------------------------------------------
 enum GeaDecodeType {
@@ -155,6 +171,8 @@ class GEAComponent : public uart::UARTDevice, public Component {
     auto_detect_ = false;
   }
   void set_src_address(uint8_t addr) { src_addr_ = addr; }
+  void set_protocol(Protocol p) { protocol_ = p; }
+  void set_poll_interval(uint32_t ms) { poll_interval_ms_ = ms; }
 
   // ---- Child entity registration ------------------------------------------
   void register_entity(GEAEntity *entity);
@@ -202,6 +220,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   void transmit_pending_();
   void finish_pending_();
   bool response_matches_pending_(uint8_t response_cmd, uint8_t req_id) const;
+  bool gea2_response_matches_pending_(uint8_t response_cmd, uint16_t erd) const;
 
   // RX state machine
   void process_rx_byte_(uint8_t byte);
@@ -216,9 +235,13 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // Configuration
   // When auto_detect_ is true, dest_addr_ starts as broadcast and is updated
   // from the SRC field of the first valid packet received from the appliance.
+  // GEA2 forces dest_address to be configured (no spontaneous traffic), so
+  // auto_detect_ is effectively GEA3-only.
   bool auto_detect_{true};
   uint8_t dest_addr_{GEA_BROADCAST_ADDR};
   uint8_t src_addr_{0xBB};
+  Protocol protocol_{Protocol::GEA3};
+  uint32_t poll_interval_ms_{2000};
 
   // RX state machine
   enum class RxState { IDLE, IN_PACKET, ESCAPE };
@@ -271,6 +294,15 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // User-configured on_erd_change triggers (see gea.on_erd_change in YAML).
   std::vector<ErdChangeTrigger *> erd_change_triggers_;
+
+  // GEA2 round-robin poller: built lazily on first poll from registered
+  // entities and on_erd_change triggers (deduplicated). Empty in GEA3 mode.
+  std::vector<uint16_t> poll_erds_;
+  size_t poll_index_{0};
+  uint32_t last_poll_ms_{0};
+  bool poll_list_built_{false};
+  void build_poll_list_();
+  void poll_next_();
 };
 
 // ---------------------------------------------------------------------------

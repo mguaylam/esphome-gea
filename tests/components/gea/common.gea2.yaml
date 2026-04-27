@@ -1,0 +1,64 @@
+external_components:
+  - source:
+      type: local
+      path: ../../../components
+    components: [gea]
+
+# Disable logger UART so no platform conflicts with the GEA UART pin choice
+# in the compile tests. (Production configs leave this at default.)
+logger:
+  baud_rate: 0
+
+# ---------------------------------------------------------------------------
+# Hub — GEA2 mode. dest_address is required (auto-detect needs publications,
+# which GEA2 doesn't have). poll_interval defaults to 2 s.
+# ---------------------------------------------------------------------------
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  protocol: gea2
+  src_address: 0xBB
+  dest_address: 0xC0
+  poll_interval: 3s
+  on_erd_change:
+    - erd: 0x2154
+      byte_offset: 1
+      bitmask: 0x20
+      edge: rising
+      then:
+        - logger.log: "rising edge fired"
+
+# ---------------------------------------------------------------------------
+# A small mix of read/write entities to exercise the GEA2 ERD payload format
+# (count=1 byte prefix, no request_id) on the wire.
+# ---------------------------------------------------------------------------
+sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: "u8"
+    erd: 0x0001
+    decode: uint8
+
+binary_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Door"
+    erd: 0x2012
+    bitmask: 0x01
+    device_class: door
+
+switch:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Boolean toggle"
+    erd: 0x3230
+    byte_offset: 0
+    payload_on: 0x01
+    payload_off: 0x00
+
+button:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Remote Start"
+    erd: 0x2149
+    payload: [0x01]

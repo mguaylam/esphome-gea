@@ -7,17 +7,19 @@ diagnostic counters via lambda, etc.). If the schema, codegen, or generated
 C++ regress, the build breaks.
 
 Shared component config lives in
-[`tests/components/gea/common.yaml`](../tests/components/gea/common.yaml).
-Each target framework has a thin platform wrapper:
+[`tests/components/gea/common.yaml`](../tests/components/gea/common.yaml)
+(GEA3) and
+[`tests/components/gea/common.gea2.yaml`](../tests/components/gea/common.gea2.yaml)
+(GEA2). Each target framework has a thin platform wrapper:
 
-| Target | File |
-|--------|------|
-| ESP32 + ESP-IDF | [`tests/components/gea/test.esp32-idf.yaml`](../tests/components/gea/test.esp32-idf.yaml) |
-| ESP32 + Arduino | [`tests/components/gea/test.esp32-arduino.yaml`](../tests/components/gea/test.esp32-arduino.yaml) |
-| ESP8266 | [`tests/components/gea/test.esp8266.yaml`](../tests/components/gea/test.esp8266.yaml) |
-| RP2040 | [`tests/components/gea/test.rp2040.yaml`](../tests/components/gea/test.rp2040.yaml) |
+| Target | GEA3 | GEA2 |
+|--------|------|------|
+| ESP32 + ESP-IDF | [`test.esp32-idf.yaml`](../tests/components/gea/test.esp32-idf.yaml) | [`test.esp32-idf.gea2.yaml`](../tests/components/gea/test.esp32-idf.gea2.yaml) |
+| ESP32 + Arduino | [`test.esp32-arduino.yaml`](../tests/components/gea/test.esp32-arduino.yaml) | — |
+| ESP8266 | [`test.esp8266.yaml`](../tests/components/gea/test.esp8266.yaml) | — |
+| RP2040 | [`test.rp2040.yaml`](../tests/components/gea/test.rp2040.yaml) | — |
 
-CI compiles all four in parallel on every PR.
+CI compiles them in parallel on every PR.
 
 ## Running locally
 

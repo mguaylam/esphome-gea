@@ -8,13 +8,13 @@
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-compatible-41bdf5?logo=home-assistant)](https://www.home-assistant.io/)
 [![ESP32](https://img.shields.io/badge/ESP32-supported-red?logo=espressif)](https://www.espressif.com/)
 
-An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances via the **GEA3 serial bus**, with native [Home Assistant](https://www.home-assistant.io/) integration.
+An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances via the **GEA2 or GEA3 serial bus**, with native [Home Assistant](https://www.home-assistant.io/) integration.
 
 ---
 
 ## What is this?
 
-Your GE dishwasher, washer, dryer, or oven has a small service port that speaks a protocol called **GEA3**. Through this port the appliance constantly publishes its state — door open/closed, cycle name, water temperature, time remaining, error codes — and accepts commands like "start the cycle" or "switch to Heavy Wash".
+Your GE dishwasher, washer, dryer, or oven has a small service port that speaks a protocol called **GEA3** (newer appliances) or **GEA2** (older ones). Through this port the appliance exposes its state — door open/closed, cycle name, water temperature, time remaining, error codes — and accepts commands like "start the cycle" or "switch to Heavy Wash".
 
 This project lets you wire a cheap ESP32 board into that port and expose everything to Home Assistant as regular entities (sensors, switches, buttons, etc.). No cloud account, no SmartHQ app, fully local.
 
@@ -102,16 +102,19 @@ to either one.
 
 > The GEA3 connector is typically a small jack behind the appliance's service panel. The FirstBuild breakout makes tapping into it straightforward — **no need to open the main electronics**.
 
-UART settings: **230,400 baud, 8N1**. (19,200 baud is GEA2, an older protocol — not supported.)
+UART settings:
+- **GEA3 (default)**: 230,400 baud, 8N1, full-duplex.
+- **GEA2 (older appliances)**: 19,200 baud, 8N1, half-duplex. Set `protocol: gea2` and `dest_address` on the hub — see [docs/hub.md](docs/hub.md).
 
 ---
 
 ## Features
 
+- **GEA2 and GEA3 protocols** — same component, configurable per appliance.
 - **Read & write** — sensors, switches, selects, numbers, buttons, text sensors, binary sensors.
-- **Auto-discovery** — every ERD on the bus is logged on boot for easy reverse-engineering.
-- **Plug-and-play addressing** — appliance bus address auto-detected.
-- **Resilient** — periodic re-subscription recovers state after appliance power cycles.
+- **Auto-discovery** — every ERD on the bus is logged on boot for easy reverse-engineering (GEA3; GEA2 polls only declared ERDs).
+- **Plug-and-play addressing** — GEA3 appliance bus address auto-detected (GEA2 requires `dest_address`).
+- **Resilient** — periodic re-subscription (GEA3) or round-robin polling (GEA2) recovers state after appliance power cycles.
 - **Flexible decoding** — 13 numeric types, raw hex, ASCII, enum option maps, scaling via `multiplier`/`offset`.
 - **Edge-triggered automations** — `on_erd_change` fires on rising/falling/any bitmask transitions.
 - **Bus health** — diagnostic counters and `is_bus_connected()` lambda for status LEDs.
@@ -135,7 +138,7 @@ UART settings: **230,400 baud, 8N1**. (19,200 baud is GEA2, an older protocol �
 | ERD discovery workflow | [docs/erd-discovery.md](docs/erd-discovery.md) |
 | Bus diagnostics | [docs/diagnostics.md](docs/diagnostics.md) |
 | Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |
-| GEA3 protocol & internals | [docs/protocol.md](docs/protocol.md) |
+| GEA2 / GEA3 protocols & internals | [docs/protocol.md](docs/protocol.md) |
 | Testing | [docs/testing.md](docs/testing.md) |
 
 Or jump in via the [documentation index](docs/index.md).
