@@ -173,13 +173,13 @@ switch:
     name: "Boolean toggle"
     erd: 0x3230
     byte_offset: 0
-    bitmask: 0x01
+    payload_on: 0x01
+    payload_off: 0x00
   - platform: gea
     gea_id: gea_hub
     name: "Distinct write_erd"
     erd: 0x3231
     write_erd: 0x3232
-    bitmask: 0x01
 
 # ---------------------------------------------------------------------------
 # Select — option map.

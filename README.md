@@ -207,10 +207,16 @@ switch:
     name: "Extra Dry"
     erd: 0x3230
     byte_offset: 2
-    bitmask: 0x01
+    payload_on: 0x01
+    payload_off: 0x00
 ```
 
-A separate `write_erd` can be specified if the read and write addresses differ.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `byte_offset` | `0` | Byte index inside the ERD payload to compare against `payload_on`/`payload_off` |
+| `payload_on` | `0x01` | Byte value indicating the switch is on |
+| `payload_off` | `0x00` | Byte value indicating the switch is off |
+| `write_erd` | (same as `erd`) | Use a different ERD for writes when read and write addresses differ |
 
 ---
 
