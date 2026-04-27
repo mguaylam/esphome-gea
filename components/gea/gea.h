@@ -274,7 +274,8 @@ class GEAComponent : public uart::UARTDevice, public Component {
 // ---------------------------------------------------------------------------
 class ErdChangeTrigger : public Trigger<> {
  public:
-  enum Edge : uint8_t { RISING = 0, FALLING = 1, ANY = 2 };
+  // Note: prefixed names avoid clashing with Arduino.h macros (RISING/FALLING).
+  enum Edge : uint8_t { EDGE_RISING = 0, EDGE_FALLING = 1, EDGE_ANY = 2 };
 
   ErdChangeTrigger(GEAComponent *parent, uint16_t erd, uint8_t byte_offset,
                    uint8_t bitmask, Edge edge)
@@ -293,9 +294,9 @@ class ErdChangeTrigger : public Trigger<> {
     uint8_t old_masked = old_data[byte_offset_] & bitmask_;
     uint8_t new_masked = new_data[byte_offset_] & bitmask_;
     switch (edge_) {
-      case RISING:  return old_masked == 0 && new_masked != 0;
-      case FALLING: return old_masked != 0 && new_masked == 0;
-      case ANY:     return old_masked != new_masked;
+      case EDGE_RISING:  return old_masked == 0 && new_masked != 0;
+      case EDGE_FALLING: return old_masked != 0 && new_masked == 0;
+      case EDGE_ANY:     return old_masked != new_masked;
     }
     return false;
   }

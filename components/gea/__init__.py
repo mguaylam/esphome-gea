@@ -113,9 +113,9 @@ GeaDecodeType = gea_ns.enum("GeaDecodeType")
 
 ErdChangeEdge = ErdChangeTrigger.enum("Edge")
 EDGES = {
-    "rising": ErdChangeEdge.RISING,
-    "falling": ErdChangeEdge.FALLING,
-    "any": ErdChangeEdge.ANY,
+    "rising": ErdChangeEdge.EDGE_RISING,
+    "falling": ErdChangeEdge.EDGE_FALLING,
+    "any": ErdChangeEdge.EDGE_ANY,
 }
 
 DECODE_TYPES = {
