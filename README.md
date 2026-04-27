@@ -1,6 +1,7 @@
 # esphome-gea
 
 [![Compile](https://github.com/mguaylam/esphome-gea/actions/workflows/compile.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/compile.yml)
+[![Test](https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml)
 [![ESPHome](https://img.shields.io/badge/ESPHome-external%20component-blue?logo=esphome)](https://esphome.io/components/external_components)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-compatible-41bdf5?logo=home-assistant)](https://www.home-assistant.io/)
@@ -529,15 +530,24 @@ A non-zero **CRC errors** counter on a stable bus usually points to a wiring/gro
 
 ## Testing
 
-Following the ESPHome convention, tests are **compile-time integration tests**: a single YAML at [`tests/test.yaml`](tests/test.yaml) instantiates every platform, decode type, and option (multiplier/offset, on_erd_change with each edge, distinct read/write ERDs, diagnostic counters via lambda, etc.). If the schema, codegen, or generated C++ regress, the build breaks.
+Following the ESPHome convention, tests are **compile-time integration tests** that exercise every platform, decode type, and option (multiplier/offset, on_erd_change with each edge, distinct read/write ERDs, diagnostic counters via lambda, etc.). If the schema, codegen, or generated C++ regress, the build breaks.
 
-Run locally with:
+Shared component config lives in [`tests/common.yaml`](tests/common.yaml); each target framework has a thin platform wrapper:
+
+| Target | File |
+|--------|------|
+| ESP32 + ESP-IDF | [`tests/test.esp32-idf.yaml`](tests/test.esp32-idf.yaml) |
+| ESP32 + Arduino | [`tests/test.esp32-arduino.yaml`](tests/test.esp32-arduino.yaml) |
+| ESP8266 | [`tests/test.esp8266.yaml`](tests/test.esp8266.yaml) |
+| RP2040 | [`tests/test.rp2040.yaml`](tests/test.rp2040.yaml) |
+
+CI compiles all four in parallel on every PR. To reproduce locally:
 
 ```bash
-esphome compile tests/test.yaml
+esphome compile tests/test.esp32-idf.yaml
 ```
 
-CI runs the same compile job plus the two real device YAMLs ([dishwasher](devices/dishwasher/PDP715SYV0FS.yaml), [washer](devices/washer/PFQ97HSPVDS.yaml)) on every PR.
+> Note: only **ESP32-C3 (XIAO)** is verified on real hardware. The other platforms are exercised at build-time to catch portability regressions but have not been runtime-tested.
 
 ---
 

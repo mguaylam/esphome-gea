@@ -1,33 +1,19 @@
-# Compile-time integration test for the gea external component.
-# Exercises every platform, decode type, and option so the CI catches
-# schema and codegen regressions. Run from repo root:
-#   esphome compile tests/test.yaml
-
-esphome:
-  name: gea-test
-
-esp32:
-  board: esp32dev
-  framework:
-    type: esp-idf
-
 external_components:
   - source:
       type: local
       path: ../components
     components: [gea]
 
+# Disable logger UART so no platform conflicts with the GEA UART pin choice
+# in the compile tests. (Production configs leave this at default.)
 logger:
+  baud_rate: 0
 
 # ---------------------------------------------------------------------------
 # Hub — exercises src/dest address and on_erd_change with each edge type.
+# (uart: is defined in each platform-specific YAML because pin assignments
+# differ per board.)
 # ---------------------------------------------------------------------------
-uart:
-  id: uart_gea
-  tx_pin: GPIO17
-  rx_pin: GPIO16
-  baud_rate: 230400
-
 gea:
   id: gea_hub
   uart_id: uart_gea

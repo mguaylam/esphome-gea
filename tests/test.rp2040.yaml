@@ -1,0 +1,17 @@
+# Compile test — RP2040 (Raspberry Pi Pico).
+# Run: esphome compile tests/test.rp2040.yaml
+
+esphome:
+  name: gea-test
+
+rp2040:
+  board: rpipico
+
+uart:
+  id: uart_gea
+  tx_pin: GPIO0
+  rx_pin: GPIO1
+  baud_rate: 230400
+
+packages:
+  common: !include common.yaml

@@ -1,0 +1,19 @@
+# Compile test — ESP8266 (Arduino framework only).
+# Run: esphome compile tests/test.esp8266.yaml
+
+esphome:
+  name: gea-test
+
+esp8266:
+  board: nodemcuv2
+
+# Hardware UART0 pins on ESP8266 = GPIO1 (TX) / GPIO3 (RX).
+# 230400 baud is supported on the hardware UART.
+uart:
+  id: uart_gea
+  tx_pin: GPIO1
+  rx_pin: GPIO3
+  baud_rate: 230400
+
+packages:
+  common: !include common.yaml
