@@ -277,7 +277,7 @@ bool GEAComponent::gea2_response_matches_pending_(uint8_t response_cmd, uint16_t
   // GEA2 body layout: [count=1][erd_h][erd_l][...]
   if (pending_.body.size() < 3)
     return false;
-  uint16_t pending_erd = ((uint16_t) pending_.body[1] << 8) | pending_.body[2];
+  uint16_t pending_erd = ((uint16_t)pending_.body[1] << 8) | pending_.body[2];
   return pending_erd == erd;
 }
 
@@ -286,8 +286,7 @@ bool GEAComponent::gea2_response_matches_pending_(uint8_t response_cmd, uint16_t
 // =============================================================================
 
 void GEAComponent::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up GEA component (protocol=%s)...",
-                protocol_ == Protocol::GEA2 ? "GEA2" : "GEA3");
+  ESP_LOGCONFIG(TAG, "Setting up GEA component (protocol=%s)...", protocol_ == Protocol::GEA2 ? "GEA2" : "GEA3");
   rx_buf_.reserve(64);
   if (protocol_ == Protocol::GEA2) {
     // GEA2 has no subscribe-all and no spontaneous publications. The Python
@@ -580,14 +579,14 @@ void GEAComponent::write_erd(uint16_t erd, const std::vector<uint8_t> &data) {
     body.push_back(0x01);  // erd_count
     body.push_back((uint8_t)(erd >> 8));
     body.push_back((uint8_t)(erd & 0xFF));
-    body.push_back((uint8_t) data.size());
+    body.push_back((uint8_t)data.size());
     body.insert(body.end(), data.begin(), data.end());
     cmd = CMD_GEA2_WRITE;
   } else {
     body.reserve(3 + data.size());
     body.push_back((uint8_t)(erd >> 8));
     body.push_back((uint8_t)(erd & 0xFF));
-    body.push_back((uint8_t) data.size());
+    body.push_back((uint8_t)data.size());
     body.insert(body.end(), data.begin(), data.end());
     cmd = CMD_WRITE_REQUEST;
   }
@@ -855,7 +854,7 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
         ESP_LOGW(TAG, "GEA2 read response with erd_count=%u not supported", erd_count);
         break;
       }
-      uint16_t erd = (uint16_t) pkt[5] << 8 | pkt[6];
+      uint16_t erd = (uint16_t)pkt[5] << 8 | pkt[6];
       uint8_t size = pkt[7];
       if (pkt.size() < (size_t)(10 + size))
         break;
@@ -890,7 +889,7 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
       uint8_t erd_count = pkt[4];
       if (erd_count != 1)
         break;
-      uint16_t erd = (uint16_t) pkt[5] << 8 | pkt[6];
+      uint16_t erd = (uint16_t)pkt[5] << 8 | pkt[6];
       if (!gea2_response_matches_pending_(cmd, erd)) {
         ESP_LOGV(TAG, "Unmatched GEA2 write response for ERD 0x%04X", erd);
         break;
