@@ -87,7 +87,7 @@ def _write_erd_table_header(table):
 
 DEPENDENCIES = ["uart"]
 AUTO_LOAD = []
-CODEOWNERS = []
+CODEOWNERS = ["@michaelguaylambert"]
 MULTI_CONF = False
 
 gea_ns = cg.esphome_ns.namespace("gea")
@@ -136,7 +136,10 @@ DECODE_TYPES = {
 
 
 def validate_options(value):
-    """Accept {int_or_hex_str: label_str} and normalise keys to int."""
+    """Accept {int_or_hex_str: label_str} and normalise keys to int.
+
+    Rejects duplicate keys after normalisation (e.g. 0x04 and "4" would collide).
+    """
     if not isinstance(value, dict):
         raise cv.Invalid("options must be a mapping of integer keys to string labels")
     result = {}
@@ -148,8 +151,22 @@ def validate_options(value):
                 raise cv.Invalid(f"option key {k!r} is not a valid integer")
         else:
             key = int(k)
+        if key in result:
+            raise cv.Invalid(f"duplicate option key {key} (0x{key:02X})")
+        if not (0 <= key <= 0xFFFFFFFF):
+            raise cv.Invalid(f"option key {key} out of range")
         result[key] = str(v)
+    if not result:
+        raise cv.Invalid("options must contain at least one entry")
     return result
+
+
+def validate_nonzero_multiplier(value):
+    """Reject multiplier=0 — would zero out all readings and break inverse on write."""
+    f = cv.float_(value)
+    if f == 0.0:
+        raise cv.Invalid("multiplier must be non-zero")
+    return f
 
 
 CONFIG_SCHEMA = cv.Schema(

@@ -14,10 +14,10 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - tests/test.esp32-idf.yaml
-          - tests/test.esp32-arduino.yaml
-          - tests/test.esp8266.yaml
-          - tests/test.rp2040.yaml
+          - tests/components/gea/test.esp32-idf.yaml
+          - tests/components/gea/test.esp32-arduino.yaml
+          - tests/components/gea/test.esp8266.yaml
+          - tests/components/gea/test.rp2040.yaml
 
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +31,7 @@ jobs:
             ~/.platformio
             ~/.esphome
             .esphome
-          key: esphome-${{ matrix.config }}-${{ hashFiles(matrix.config, 'tests/common.yaml', 'components/**') }}
+          key: esphome-${{ matrix.config }}-${{ hashFiles(matrix.config, 'tests/components/gea/common.yaml', 'components/**') }}
           restore-keys: |
             esphome-${{ matrix.config }}-
 

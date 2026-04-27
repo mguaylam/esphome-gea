@@ -1,5 +1,5 @@
-# Compile test — ESP32 with ESP-IDF framework.
-# Run: esphome compile tests/test.esp32-idf.yaml
+# Compile test — ESP32 with Arduino framework.
+# Run: esphome compile tests/components/gea/test.esp32-arduino.yaml
 
 esphome:
   name: gea-test
@@ -7,7 +7,7 @@ esphome:
 esp32:
   board: esp32dev
   framework:
-    type: esp-idf
+    type: arduino
 
 uart:
   id: uart_gea

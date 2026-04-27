@@ -532,19 +532,19 @@ A non-zero **CRC errors** counter on a stable bus usually points to a wiring/gro
 
 Following the ESPHome convention, tests are **compile-time integration tests** that exercise every platform, decode type, and option (multiplier/offset, on_erd_change with each edge, distinct read/write ERDs, diagnostic counters via lambda, etc.). If the schema, codegen, or generated C++ regress, the build breaks.
 
-Shared component config lives in [`tests/common.yaml`](tests/common.yaml); each target framework has a thin platform wrapper:
+Shared component config lives in [`tests/components/gea/common.yaml`](tests/components/gea/common.yaml); each target framework has a thin platform wrapper:
 
 | Target | File |
 |--------|------|
-| ESP32 + ESP-IDF | [`tests/test.esp32-idf.yaml`](tests/test.esp32-idf.yaml) |
-| ESP32 + Arduino | [`tests/test.esp32-arduino.yaml`](tests/test.esp32-arduino.yaml) |
-| ESP8266 | [`tests/test.esp8266.yaml`](tests/test.esp8266.yaml) |
-| RP2040 | [`tests/test.rp2040.yaml`](tests/test.rp2040.yaml) |
+| ESP32 + ESP-IDF | [`tests/components/gea/test.esp32-idf.yaml`](tests/components/gea/test.esp32-idf.yaml) |
+| ESP32 + Arduino | [`tests/components/gea/test.esp32-arduino.yaml`](tests/components/gea/test.esp32-arduino.yaml) |
+| ESP8266 | [`tests/components/gea/test.esp8266.yaml`](tests/components/gea/test.esp8266.yaml) |
+| RP2040 | [`tests/components/gea/test.rp2040.yaml`](tests/components/gea/test.rp2040.yaml) |
 
 CI compiles all four in parallel on every PR. To reproduce locally:
 
 ```bash
-esphome compile tests/test.esp32-idf.yaml
+esphome compile tests/components/gea/test.esp32-idf.yaml
 ```
 
 > Note: only **ESP32-C3 (XIAO)** is verified on real hardware. The other platforms are exercised at build-time to catch portability regressions but have not been runtime-tested.

@@ -15,6 +15,10 @@ class GEASensor : public sensor::Sensor, public GEAEntity, public Component {
     float value = decode_as_float(data);
     publish_state(value);
   }
+  void dump_config() override {
+    LOG_SENSOR("", "GEA Sensor", this);
+    dump_erd_config("sensor.gea");
+  }
 };
 
 }  // namespace gea

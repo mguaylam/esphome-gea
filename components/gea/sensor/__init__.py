@@ -19,6 +19,7 @@ from .. import (
     CONF_MULTIPLIER,
     CONF_OFFSET,
     DECODE_TYPES,
+    validate_nonzero_multiplier,
 )
 
 DEPENDENCIES = ["gea"]
@@ -35,7 +36,7 @@ CONFIG_SCHEMA = (
                 DECODE_TYPES, lower=True
             ),
             cv.Optional(CONF_BYTE_OFFSET, default=0): cv.uint8_t,
-            cv.Optional(CONF_MULTIPLIER, default=1.0): cv.float_,
+            cv.Optional(CONF_MULTIPLIER, default=1.0): validate_nonzero_multiplier,
             cv.Optional(CONF_OFFSET, default=0.0): cv.float_,
         }
     )

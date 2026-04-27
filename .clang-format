@@ -1,0 +1,22 @@
+# Matches the ESPHome upstream style (see esphome/esphome .clang-format).
+# Run with: clang-format -i components/gea/**/*.{h,cpp}
+---
+Language: Cpp
+BasedOnStyle: Google
+AccessModifierOffset: -1
+AlignAfterOpenBracket: Align
+AlignTrailingComments: true
+AllowShortBlocksOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+ColumnLimit: 120
+DerivePointerAlignment: false
+IndentCaseLabels: true
+IndentWidth: 2
+PointerAlignment: Right
+SortIncludes: false
+SpacesBeforeTrailingComments: 2
+Standard: c++17
+UseTab: Never

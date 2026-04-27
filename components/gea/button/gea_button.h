@@ -13,6 +13,12 @@ class GEAButton : public button::Button, public Component {
   void set_parent(GEAComponent *parent) { parent_ = parent; }
   void add_payload_byte(uint8_t b) { payload_.push_back(b); }
 
+  void dump_config() override {
+    LOG_BUTTON("", "GEA Button", this);
+    ESP_LOGCONFIG("button.gea", "  ERD: 0x%04X", erd_);
+    ESP_LOGCONFIG("button.gea", "  Payload: %zuB", payload_.size());
+  }
+
  protected:
   void press_action() override {
     if (parent_)

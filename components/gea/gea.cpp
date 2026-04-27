@@ -19,57 +19,40 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
 // =============================================================================
 
 float GEAEntity::decode_as_float(const std::vector<uint8_t> &data) const {
-  if (data.size() <= (size_t) byte_offset_)
+  if (data.size() <= (size_t)byte_offset_)
     return 0.0f;
   const uint8_t *d = data.data() + byte_offset_;
   size_t rem = data.size() - byte_offset_;
   float raw = 0.0f;
 
   switch (decode_) {
-    case GeaDecodeType::UINT8:
-      raw = (rem >= 1) ? (float) d[0] : 0.0f;
-      break;
-    case GeaDecodeType::UINT16_BE:
-      raw = (rem >= 2) ? (float) ((uint16_t) d[0] << 8 | d[1]) : 0.0f;
-      break;
-    case GeaDecodeType::UINT16_LE:
-      raw = (rem >= 2) ? (float) ((uint16_t) d[1] << 8 | d[0]) : 0.0f;
-      break;
+    case GeaDecodeType::UINT8: raw = (rem >= 1) ? (float)d[0] : 0.0f; break;
+    case GeaDecodeType::UINT16_BE: raw = (rem >= 2) ? (float)((uint16_t)d[0] << 8 | d[1]) : 0.0f; break;
+    case GeaDecodeType::UINT16_LE: raw = (rem >= 2) ? (float)((uint16_t)d[1] << 8 | d[0]) : 0.0f; break;
     case GeaDecodeType::UINT32_BE:
       if (rem >= 4)
-        raw = (float) ((uint32_t) d[0] << 24 | (uint32_t) d[1] << 16 | (uint32_t) d[2] << 8 | d[3]);
+        raw = (float)((uint32_t)d[0] << 24 | (uint32_t)d[1] << 16 | (uint32_t)d[2] << 8 | d[3]);
       else if (rem == 3)
-        raw = (float) ((uint32_t) d[0] << 16 | (uint32_t) d[1] << 8 | d[2]);
+        raw = (float)((uint32_t)d[0] << 16 | (uint32_t)d[1] << 8 | d[2]);
       break;
     case GeaDecodeType::UINT32_LE:
-      raw = (rem >= 4)
-          ? (float) ((uint32_t) d[3] << 24 | (uint32_t) d[2] << 16 | (uint32_t) d[1] << 8 | d[0])
-          : 0.0f;
+      raw = (rem >= 4) ? (float)((uint32_t)d[3] << 24 | (uint32_t)d[2] << 16 | (uint32_t)d[1] << 8 | d[0]) : 0.0f;
       break;
-    case GeaDecodeType::INT8:
-      raw = (rem >= 1) ? (float) (int8_t) d[0] : 0.0f;
-      break;
-    case GeaDecodeType::INT16_BE:
-      raw = (rem >= 2) ? (float) (int16_t) ((uint16_t) d[0] << 8 | d[1]) : 0.0f;
-      break;
-    case GeaDecodeType::INT16_LE:
-      raw = (rem >= 2) ? (float) (int16_t) ((uint16_t) d[1] << 8 | d[0]) : 0.0f;
-      break;
+    case GeaDecodeType::INT8: raw = (rem >= 1) ? (float)(int8_t)d[0] : 0.0f; break;
+    case GeaDecodeType::INT16_BE: raw = (rem >= 2) ? (float)(int16_t)((uint16_t)d[0] << 8 | d[1]) : 0.0f; break;
+    case GeaDecodeType::INT16_LE: raw = (rem >= 2) ? (float)(int16_t)((uint16_t)d[1] << 8 | d[0]) : 0.0f; break;
     case GeaDecodeType::INT32_BE:
-      raw = (rem >= 4)
-          ? (float) (int32_t) ((uint32_t) d[0] << 24 | (uint32_t) d[1] << 16 | (uint32_t) d[2] << 8 | d[3])
-          : 0.0f;
+      raw = (rem >= 4) ? (float)(int32_t)((uint32_t)d[0] << 24 | (uint32_t)d[1] << 16 | (uint32_t)d[2] << 8 | d[3])
+                       : 0.0f;
       break;
     case GeaDecodeType::INT32_LE:
-      raw = (rem >= 4)
-          ? (float) (int32_t) ((uint32_t) d[3] << 24 | (uint32_t) d[2] << 16 | (uint32_t) d[1] << 8 | d[0])
-          : 0.0f;
+      raw = (rem >= 4) ? (float)(int32_t)((uint32_t)d[3] << 24 | (uint32_t)d[2] << 16 | (uint32_t)d[1] << 8 | d[0])
+                       : 0.0f;
       break;
     case GeaDecodeType::BOOL:
       // BOOL is unscaled — masked bit, returned as 0 or 1.
       return (rem >= 1) ? ((d[0] & bitmask_) ? 1.0f : 0.0f) : 0.0f;
-    default:
-      return 0.0f;
+    default: return 0.0f;
   }
   return raw * multiplier_ + offset_;
 }
@@ -93,18 +76,12 @@ void GEAEntity::encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const {
       case GeaDecodeType::UINT16_BE:
       case GeaDecodeType::INT16_BE:
       case GeaDecodeType::UINT16_LE:
-      case GeaDecodeType::INT16_LE:
-        n = 2;
-        break;
+      case GeaDecodeType::INT16_LE: n = 2; break;
       case GeaDecodeType::UINT32_BE:
       case GeaDecodeType::INT32_BE:
       case GeaDecodeType::UINT32_LE:
-      case GeaDecodeType::INT32_LE:
-        n = 4;
-        break;
-      default:
-        n = 1;
-        break;
+      case GeaDecodeType::INT32_LE: n = 4; break;
+      default: n = 1; break;
     }
   }
   bool le = false;
@@ -112,17 +89,14 @@ void GEAEntity::encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const {
     case GeaDecodeType::UINT16_LE:
     case GeaDecodeType::INT16_LE:
     case GeaDecodeType::UINT32_LE:
-    case GeaDecodeType::INT32_LE:
-      le = true;
-      break;
-    default:
-      break;
+    case GeaDecodeType::INT32_LE: le = true; break;
+    default: break;
   }
   if (le) {
     for (uint8_t i = 0; i < n; i++)
       out.push_back((val >> (i * 8)) & 0xFF);
   } else {
-    for (int i = (int) n - 1; i >= 0; i--)
+    for (int i = (int)n - 1; i >= 0; i--)
       out.push_back((val >> (i * 8)) & 0xFF);
   }
 }
@@ -137,7 +111,7 @@ void GEAEntity::encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const {
 uint16_t GEAComponent::crc16_(const uint8_t *data, size_t len) {
   uint16_t crc = GEA_CRC_SEED;
   for (size_t i = 0; i < len; i++) {
-    crc ^= (uint16_t) data[i] << 8;
+    crc ^= (uint16_t)data[i] << 8;
     for (int j = 0; j < 8; j++) {
       crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
     }
@@ -179,7 +153,7 @@ std::vector<uint8_t> GEAComponent::escape_(const std::vector<uint8_t> &raw) {
 // CRC is computed over [DEST][LEN][SRC][payload...] before escaping.
 // Everything between STX and ETX is then escape-processed.
 void GEAComponent::send_packet_(uint8_t dest, const std::vector<uint8_t> &payload) {
-  uint8_t len = (uint8_t) (7 + payload.size());
+  uint8_t len = (uint8_t)(7 + payload.size());
 
   // Build the inner portion (subject to CRC and escaping)
   std::vector<uint8_t> inner;
@@ -190,8 +164,8 @@ void GEAComponent::send_packet_(uint8_t dest, const std::vector<uint8_t> &payloa
   inner.insert(inner.end(), payload.begin(), payload.end());
 
   uint16_t crc = crc16_(inner.data(), inner.size());
-  inner.push_back(crc >> 8);     // CRC MSB (sent first, per GEA3 spec)
-  inner.push_back(crc & 0xFF);   // CRC LSB
+  inner.push_back(crc >> 8);    // CRC MSB (sent first, per GEA3 spec)
+  inner.push_back(crc & 0xFF);  // CRC LSB
 
   auto escaped = escape_(inner);
 
@@ -208,7 +182,9 @@ uint8_t GEAComponent::next_req_id_() {
 }
 
 // Send a bare ACK byte (no framing — GEA3 ACK is a single 0xE1 on the wire).
-void GEAComponent::send_ack_() { write_byte(GEA_ACK); }
+void GEAComponent::send_ack_() {
+  write_byte(GEA_ACK);
+}
 
 // Send a framed publication acknowledgement: [CMD_PUB_ACK][context][request_id].
 // The context and request_id must echo the values from the publication header.
@@ -332,11 +308,10 @@ void GEAComponent::dump_config() {
       } else {
         std::string val = decode_erd_value(kv.second, info->type);
         if (val.empty()) {
-          ESP_LOGCONFIG(TAG, "    0x%04X  %-40s  [%s]  raw=%s",
-                        kv.first, info->name, info->type, raw.c_str());
+          ESP_LOGCONFIG(TAG, "    0x%04X  %-40s  [%s]  raw=%s", kv.first, info->name, info->type, raw.c_str());
         } else {
-          ESP_LOGCONFIG(TAG, "    0x%04X  %-40s  [%s]  raw=%s  val=%s",
-                        kv.first, info->name, info->type, raw.c_str(), val.c_str());
+          ESP_LOGCONFIG(TAG, "    0x%04X  %-40s  [%s]  raw=%s  val=%s", kv.first, info->name, info->type, raw.c_str(),
+                        val.c_str());
         }
       }
 #else
@@ -363,7 +338,8 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
     std::string field = ts.substr(pos, slash == std::string::npos ? std::string::npos : slash - pos);
     pos = (slash == std::string::npos) ? ts.size() + 1 : slash + 1;
 
-    if (!result.empty()) result += "/";
+    if (!result.empty())
+      result += "/";
 
     char buf[32];
     if (field == "u8" || field == "enum") {
@@ -373,7 +349,7 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
       }
     } else if (field == "i8") {
       if (offset < data.size()) {
-        snprintf(buf, sizeof(buf), "%d", (int8_t) data[offset++]);
+        snprintf(buf, sizeof(buf), "%d", (int8_t)data[offset++]);
         result += buf;
       }
     } else if (field == "bool") {
@@ -381,30 +357,30 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
         result += data[offset++] ? "true" : "false";
     } else if (field == "u16") {
       if (offset + 2 <= data.size()) {
-        uint16_t v = ((uint16_t) data[offset] << 8) | data[offset + 1];
+        uint16_t v = ((uint16_t)data[offset] << 8) | data[offset + 1];
         offset += 2;
         snprintf(buf, sizeof(buf), "%u", v);
         result += buf;
       }
     } else if (field == "i16") {
       if (offset + 2 <= data.size()) {
-        int16_t v = (int16_t)(((uint16_t) data[offset] << 8) | data[offset + 1]);
+        int16_t v = (int16_t)(((uint16_t)data[offset] << 8) | data[offset + 1]);
         offset += 2;
         snprintf(buf, sizeof(buf), "%d", v);
         result += buf;
       }
     } else if (field == "u32") {
       if (offset + 4 <= data.size()) {
-        uint32_t v = ((uint32_t) data[offset] << 24) | ((uint32_t) data[offset + 1] << 16) |
-                     ((uint32_t) data[offset + 2] << 8) | data[offset + 3];
+        uint32_t v = ((uint32_t)data[offset] << 24) | ((uint32_t)data[offset + 1] << 16) |
+                     ((uint32_t)data[offset + 2] << 8) | data[offset + 3];
         offset += 4;
         snprintf(buf, sizeof(buf), "%u", v);
         result += buf;
       }
     } else if (field == "i32") {
       if (offset + 4 <= data.size()) {
-        int32_t v = (int32_t)(((uint32_t) data[offset] << 24) | ((uint32_t) data[offset + 1] << 16) |
-                              ((uint32_t) data[offset + 2] << 8) | data[offset + 3]);
+        int32_t v = (int32_t)(((uint32_t)data[offset] << 24) | ((uint32_t)data[offset + 1] << 16) |
+                              ((uint32_t)data[offset + 2] << 8) | data[offset + 3]);
         offset += 4;
         snprintf(buf, sizeof(buf), "%d", v);
         result += buf;
@@ -412,7 +388,7 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
     } else if (field == "string") {
       result += '"';
       while (offset < data.size() && data[offset] != 0)
-        result += (char) data[offset++];
+        result += (char)data[offset++];
       result += '"';
     } else {
       // raw or unknown — skip remainder
@@ -442,11 +418,10 @@ void GEAComponent::log_erds() const {
     } else {
       std::string val = decode_erd_value(kv.second, info->type);
       if (val.empty()) {
-        ESP_LOGI(TAG, "  0x%04X  %-40s  [%-20s]  %s  raw=%s",
-                 kv.first, info->name, info->type, info->ops, raw.c_str());
+        ESP_LOGI(TAG, "  0x%04X  %-40s  [%-20s]  %s  raw=%s", kv.first, info->name, info->type, info->ops, raw.c_str());
       } else {
-        ESP_LOGI(TAG, "  0x%04X  %-40s  [%-20s]  %s  raw=%s  val=%s",
-                 kv.first, info->name, info->type, info->ops, raw.c_str(), val.c_str());
+        ESP_LOGI(TAG, "  0x%04X  %-40s  [%-20s]  %s  raw=%s  val=%s", kv.first, info->name, info->type, info->ops,
+                 raw.c_str(), val.c_str());
       }
     }
   }
@@ -467,8 +442,7 @@ void GEAComponent::loop() {
   uint32_t now_stats = millis();
   if (now_stats - last_stats_ms_ >= 10000) {
     last_stats_ms_ = now_stats;
-    ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s",
-             rx_byte_count_,
+    ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s", rx_byte_count_,
              is_bus_connected() ? "CONNECTED" : "no valid packets yet");
   }
 
@@ -511,13 +485,12 @@ void GEAComponent::loop() {
       if (pending_.retries_left > 0) {
         pending_.retries_left--;
         tx_retries_++;
-        ESP_LOGD(TAG, "Request cmd=0x%02X id=0x%02X timed out, retrying (%u left)",
-                 pending_.cmd, pending_.req_id, pending_.retries_left);
+        ESP_LOGD(TAG, "Request cmd=0x%02X id=0x%02X timed out, retrying (%u left)", pending_.cmd, pending_.req_id,
+                 pending_.retries_left);
         transmit_pending_();
       } else {
         dropped_requests_++;
-        ESP_LOGW(TAG, "Request cmd=0x%02X id=0x%02X exhausted retries, dropping",
-                 pending_.cmd, pending_.req_id);
+        ESP_LOGW(TAG, "Request cmd=0x%02X id=0x%02X exhausted retries, dropping", pending_.cmd, pending_.req_id);
         finish_pending_();
       }
     }
@@ -540,7 +513,7 @@ void GEAComponent::register_entity(GEAEntity *entity) {
 }
 
 void GEAComponent::read_erd(uint16_t erd) {
-  std::vector<uint8_t> body = {(uint8_t) (erd >> 8), (uint8_t) (erd & 0xFF)};
+  std::vector<uint8_t> body = {(uint8_t)(erd >> 8), (uint8_t)(erd & 0xFF)};
   enqueue_request_(CMD_READ_REQUEST, std::move(body));
   ESP_LOGD(TAG, "Queued read ERD 0x%04X", erd);
 }
@@ -548,9 +521,9 @@ void GEAComponent::read_erd(uint16_t erd) {
 void GEAComponent::write_erd(uint16_t erd, const std::vector<uint8_t> &data) {
   std::vector<uint8_t> body;
   body.reserve(3 + data.size());
-  body.push_back((uint8_t) (erd >> 8));
-  body.push_back((uint8_t) (erd & 0xFF));
-  body.push_back((uint8_t) data.size());
+  body.push_back((uint8_t)(erd >> 8));
+  body.push_back((uint8_t)(erd & 0xFF));
+  body.push_back((uint8_t)data.size());
   body.insert(body.end(), data.begin(), data.end());
   enqueue_request_(CMD_WRITE_REQUEST, std::move(body));
   ESP_LOGD(TAG, "Queued write ERD 0x%04X (%zu bytes)", erd, data.size());
@@ -612,7 +585,7 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
   }
 
   uint8_t dest = pkt[0];
-  uint8_t src  = pkt[2];
+  uint8_t src = pkt[2];
 
   ESP_LOGV(TAG, "RX frame: dest=0x%02X src=0x%02X len=%zu", dest, src, pkt.size());
 
@@ -625,13 +598,13 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
   // Validate CRC: computed over everything except the last 2 (CRC) bytes.
   // GEA3 wire order is CRC MSB first, then LSB (big-endian).
   size_t crc_offset = pkt.size() - 2;
-  uint16_t rx_crc = ((uint16_t) pkt[crc_offset] << 8) | (uint16_t) pkt[crc_offset + 1];
+  uint16_t rx_crc = ((uint16_t)pkt[crc_offset] << 8) | (uint16_t)pkt[crc_offset + 1];
   uint16_t calc_crc = crc16_(pkt.data(), crc_offset);
 
   if (rx_crc != calc_crc) {
     crc_errors_++;
-    ESP_LOGW(TAG, "CRC mismatch from 0x%02X: got 0x%04X, expected 0x%04X (packet len=%zu)",
-             src, rx_crc, calc_crc, pkt.size());
+    ESP_LOGW(TAG, "CRC mismatch from 0x%02X: got 0x%04X, expected 0x%04X (packet len=%zu)", src, rx_crc, calc_crc,
+             pkt.size());
     return;
   }
 
@@ -666,14 +639,14 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
         break;
       }
       uint8_t result = pkt[5];
-      uint16_t erd = (uint16_t) pkt[6] << 8 | pkt[7];
+      uint16_t erd = (uint16_t)pkt[6] << 8 | pkt[7];
       if (result != 0x00) {
         ESP_LOGW(TAG, "Read ERD 0x%04X failed, result=0x%02X", erd, result);
         finish_pending_();
         break;
       }
       uint8_t size = pkt[8];
-      if (pkt.size() < (size_t) (9 + size)) {
+      if (pkt.size() < (size_t)(9 + size)) {
         finish_pending_();
         break;
       }
@@ -703,7 +676,7 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
         break;
       }
       uint8_t result = pkt[5];
-      uint16_t erd = (uint16_t) pkt[6] << 8 | pkt[7];
+      uint16_t erd = (uint16_t)pkt[6] << 8 | pkt[7];
       if (result != 0x00) {
         ESP_LOGW(TAG, "Write ERD 0x%04X failed, result=0x%02X", erd, result);
       } else {
@@ -762,7 +735,7 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
       for (uint8_t i = 0; i < erd_count; i++) {
         if (offset + 3 > pkt.size() - 2)  // need ERD_H+ERD_L+size before CRC
           break;
-        uint16_t erd = (uint16_t) pkt[offset] << 8 | pkt[offset + 1];
+        uint16_t erd = (uint16_t)pkt[offset] << 8 | pkt[offset + 1];
         uint8_t size = pkt[offset + 2];
         offset += 3;
         if (offset + size > pkt.size() - 2)
@@ -776,9 +749,7 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
       break;
     }
 
-    default:
-      ESP_LOGV(TAG, "Unknown command 0x%02X, ignoring", cmd);
-      break;
+    default: ESP_LOGV(TAG, "Unknown command 0x%02X, ignoring", cmd); break;
   }
 }
 
@@ -797,11 +768,21 @@ void GEAComponent::dispatch_erd_(uint16_t erd, const std::vector<uint8_t> &data)
 // baseline — no triggers fire — so a mid-cycle reboot doesn't re-notify bits that
 // are already set.
 void GEAComponent::log_discovery_(uint16_t erd, const std::vector<uint8_t> &data) {
+  // Bound the map: appliances rarely publish more than ~200 ERDs, but a buggy
+  // device or noisy bus could grow this unbounded. Cap to avoid OOM on RAM-tight
+  // targets (ESP8266 has ~50 KB heap).
+  static constexpr size_t MAX_DISCOVERED_ERDS = 512;
+
   auto it = discovered_erds_.find(erd);
   bool is_new = (it == discovered_erds_.end());
   std::vector<uint8_t> old_data;
   if (!is_new)
     old_data = it->second;  // capture previous value before overwriting
+
+  if (is_new && discovered_erds_.size() >= MAX_DISCOVERED_ERDS) {
+    ESP_LOGW(TAG, "discovered_erds_ cap (%zu) reached — skipping ERD 0x%04X", MAX_DISCOVERED_ERDS, erd);
+    return;
+  }
   discovered_erds_[erd] = data;
 
   if (is_new) {
@@ -811,8 +792,8 @@ void GEAComponent::log_discovery_(uint16_t erd, const std::vector<uint8_t> &data
       snprintf(buf, sizeof(buf), "%02X", b);
       hex += buf;
     }
-    ESP_LOGI(TAG, "New ERD 0x%04X (%zu B): %s  [total discovered: %zu]",
-             erd, data.size(), hex.c_str(), discovered_erds_.size());
+    ESP_LOGI(TAG, "New ERD 0x%04X (%zu B): %s  [total discovered: %zu]", erd, data.size(), hex.c_str(),
+             discovered_erds_.size());
     return;  // baseline only — no triggers on first contact
   }
 

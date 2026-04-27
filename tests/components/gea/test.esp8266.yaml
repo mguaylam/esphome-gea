@@ -1,5 +1,5 @@
 # Compile test — ESP8266 (Arduino framework only).
-# Run: esphome compile tests/test.esp8266.yaml
+# Run: esphome compile tests/components/gea/test.esp8266.yaml
 
 esphome:
   name: gea-test

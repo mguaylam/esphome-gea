@@ -10,9 +10,7 @@ namespace gea {
 
 class GEATextSensor : public text_sensor::TextSensor, public GEAEntity, public Component {
  public:
-  void add_option(uint32_t key, const std::string &label) {
-    options_[key] = label;
-  }
+  void add_option(uint32_t key, const std::string &label) { options_[key] = label; }
 
   void on_erd_data(const std::vector<uint8_t> &data) override {
     if (data.empty())
@@ -26,13 +24,13 @@ class GEATextSensor : public text_sensor::TextSensor, public GEAEntity, public C
       publish_state(std::string(data.begin(), data.begin() + len));
     } else if (!options_.empty()) {
       // Decode as number, look up in options map
-      auto key = (uint32_t) decode_as_float(data);
+      auto key = (uint32_t)decode_as_float(data);
       auto it = options_.find(key);
       if (it != options_.end()) {
         publish_state(it->second);
       } else {
         char buf[16];
-        snprintf(buf, sizeof(buf), "0x%02X", (unsigned) key);
+        snprintf(buf, sizeof(buf), "0x%02X", (unsigned)key);
         publish_state(std::string(buf));
       }
     } else if (decode_ == GeaDecodeType::RAW) {
@@ -50,6 +48,11 @@ class GEATextSensor : public text_sensor::TextSensor, public GEAEntity, public C
       }
       publish_state(std::string(buf));
     }
+  }
+
+  void dump_config() override {
+    LOG_TEXT_SENSOR("", "GEA Text Sensor", this);
+    dump_erd_config("text_sensor.gea");
   }
 
  private:

@@ -1,7 +1,7 @@
 external_components:
   - source:
       type: local
-      path: ../components
+      path: ../../../components
     components: [gea]
 
 # Disable logger UART so no platform conflicts with the GEA UART pin choice

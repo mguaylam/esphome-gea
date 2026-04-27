@@ -11,21 +11,25 @@ namespace gea {
 class GEASelect : public select::Select, public GEAEntity, public Component {
  public:
   // Called from Python codegen to populate the options map.
-  void add_option(uint32_t key, const std::string &label) {
-    options_[key] = label;
-  }
+  void add_option(uint32_t key, const std::string &label) { options_[key] = label; }
 
   // Receive ERD data from the bus: decode the value, look it up in options_.
   void on_erd_data(const std::vector<uint8_t> &data) override {
     if (data.empty())
       return;
-    auto key = (uint32_t) decode_as_float(data);
+    auto key = (uint32_t)decode_as_float(data);
     auto it = options_.find(key);
     if (it != options_.end()) {
       publish_state(it->second);
     } else {
-      ESP_LOGD("gea.select", "Unmapped value 0x%02X for ERD 0x%04X — ignoring", (unsigned) key, erd_);
+      ESP_LOGD("select.gea", "Unmapped value 0x%02X for ERD 0x%04X — ignoring", (unsigned)key, erd_);
     }
+  }
+
+  void dump_config() override {
+    LOG_SELECT("", "GEA Select", this);
+    dump_erd_config("select.gea");
+    ESP_LOGCONFIG("select.gea", "  Options: %zu", options_.size());
   }
 
  protected:

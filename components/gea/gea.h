@@ -2,6 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
+#include "esphome/core/optional.h"
 #include "esphome/core/automation.h"
 #include "esphome/components/uart/uart.h"
 #include <string>
@@ -29,14 +30,14 @@ static constexpr uint8_t GEA_BROADCAST_ADDR = 0xFF;
 // ---------------------------------------------------------------------------
 // GEA3 ERD API command bytes
 // ---------------------------------------------------------------------------
-static constexpr uint8_t CMD_READ_REQUEST    = 0xA0;
-static constexpr uint8_t CMD_READ_RESPONSE   = 0xA1;
-static constexpr uint8_t CMD_WRITE_REQUEST   = 0xA2;
-static constexpr uint8_t CMD_WRITE_RESPONSE  = 0xA3;
+static constexpr uint8_t CMD_READ_REQUEST = 0xA0;
+static constexpr uint8_t CMD_READ_RESPONSE = 0xA1;
+static constexpr uint8_t CMD_WRITE_REQUEST = 0xA2;
+static constexpr uint8_t CMD_WRITE_RESPONSE = 0xA3;
 static constexpr uint8_t CMD_SUB_ALL_REQUEST = 0xA4;  // subscribe-all (triggers discovery)
 static constexpr uint8_t CMD_SUB_ALL_RESPONSE = 0xA5;
-static constexpr uint8_t CMD_PUBLICATION     = 0xA6;  // appliance broadcasts all ERD values
-static constexpr uint8_t CMD_PUB_ACK         = 0xA7;  // publication acknowledgement
+static constexpr uint8_t CMD_PUBLICATION = 0xA6;       // appliance broadcasts all ERD values
+static constexpr uint8_t CMD_PUB_ACK = 0xA7;           // publication acknowledgement
 static constexpr uint8_t CMD_SUB_HOST_STARTUP = 0xA8;  // appliance announces it just came online
 
 // ---------------------------------------------------------------------------
@@ -66,7 +67,7 @@ class GEAComponent;
 class GEAEntity {
  public:
   void set_erd(uint16_t erd) { erd_ = erd; }
-  void set_write_erd(uint16_t erd) { write_erd_ = erd; has_write_erd_ = true; }
+  void set_write_erd(uint16_t erd) { write_erd_ = erd; }
   void set_decode(GeaDecodeType decode) { decode_ = decode; }
   void set_bitmask(uint8_t bitmask) { bitmask_ = bitmask; }
   void set_byte_offset(uint8_t offset) { byte_offset_ = offset; }
@@ -77,15 +78,14 @@ class GEAEntity {
 
   uint16_t get_erd() const { return erd_; }
   // Returns write_erd if explicitly set, otherwise falls back to erd.
-  uint16_t get_write_erd() const { return has_write_erd_ ? write_erd_ : erd_; }
+  uint16_t get_write_erd() const { return write_erd_.value_or(erd_); }
 
   // Called by GEAComponent when a matching ERD value arrives
   virtual void on_erd_data(const std::vector<uint8_t> &data) = 0;
 
  protected:
   uint16_t erd_{0};
-  uint16_t write_erd_{0};
-  bool has_write_erd_{false};
+  optional<uint16_t> write_erd_;
   GeaDecodeType decode_{GeaDecodeType::RAW};
   uint8_t bitmask_{0xFF};
   uint8_t byte_offset_{0};
@@ -104,6 +104,21 @@ class GEAEntity {
   // Encode a uint32 value into bytes using the configured decode type and data_size.
   // Used by writable entities (select, number) to convert a value back to ERD bytes.
   void encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const;
+
+ public:
+  // Common ERD info dump shared by every entity's dump_config().
+  void dump_erd_config(const char *tag) const {
+    if (write_erd_.has_value())
+      ESP_LOGCONFIG(tag, "  ERD: 0x%04X (write 0x%04X)", erd_, *write_erd_);
+    else
+      ESP_LOGCONFIG(tag, "  ERD: 0x%04X", erd_);
+    if (byte_offset_ != 0)
+      ESP_LOGCONFIG(tag, "  Byte offset: %u", byte_offset_);
+    if (bitmask_ != 0xFF)
+      ESP_LOGCONFIG(tag, "  Bitmask: 0x%02X", bitmask_);
+    if (multiplier_ != 1.0f || offset_ != 0.0f)
+      ESP_LOGCONFIG(tag, "  Scaling: y = x * %.4f + %.4f", multiplier_, offset_);
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -135,7 +150,10 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // ---- Configuration setters (called from Python codegen) -----------------
   // dest_address is optional: if not called, auto-detect is used instead.
-  void set_dest_address(uint8_t addr) { dest_addr_ = addr; auto_detect_ = false; }
+  void set_dest_address(uint8_t addr) {
+    dest_addr_ = addr;
+    auto_detect_ = false;
+  }
   void set_src_address(uint8_t addr) { src_addr_ = addr; }
 
   // ---- Child entity registration ------------------------------------------
@@ -149,9 +167,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // ---- Status — usable in YAML lambdas (e.g. for a GEA-connected LED) -----
   // Returns true if a valid packet has been received within the last 30 s.
-  bool is_bus_connected() const {
-    return last_rx_ms_ != 0 && (millis() - last_rx_ms_) < 30000;
-  }
+  bool is_bus_connected() const { return last_rx_ms_ != 0 && (millis() - last_rx_ms_) < 30000; }
 
   // ---- Diagnostics — callable from YAML lambdas ---------------------------
   // Logs all discovered ERDs at INFO level. Useful to call on api: on_client_connected
@@ -170,9 +186,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   uint32_t get_dropped_requests() const { return dropped_requests_; }
 
   // ---- on_erd_change triggers (registered from Python codegen) ------------
-  void register_erd_change_trigger(ErdChangeTrigger *trigger) {
-    erd_change_triggers_.push_back(trigger);
-  }
+  void register_erd_change_trigger(ErdChangeTrigger *trigger) { erd_change_triggers_.push_back(trigger); }
 
  protected:
   // TX helpers
@@ -277,8 +291,7 @@ class ErdChangeTrigger : public Trigger<> {
   // Note: prefixed names avoid clashing with Arduino.h macros (RISING/FALLING).
   enum Edge : uint8_t { EDGE_RISING = 0, EDGE_FALLING = 1, EDGE_ANY = 2 };
 
-  ErdChangeTrigger(GEAComponent *parent, uint16_t erd, uint8_t byte_offset,
-                   uint8_t bitmask, Edge edge)
+  ErdChangeTrigger(GEAComponent *parent, uint16_t erd, uint8_t byte_offset, uint8_t bitmask, Edge edge)
       : erd_(erd), byte_offset_(byte_offset), bitmask_(bitmask), edge_(edge) {
     parent->register_erd_change_trigger(this);
   }
@@ -287,16 +300,15 @@ class ErdChangeTrigger : public Trigger<> {
 
   // Returns true if the configured edge condition is met between old and new.
   // Caller must ensure old_data is non-empty (no first-seen evaluation).
-  bool evaluate(const std::vector<uint8_t> &old_data,
-                const std::vector<uint8_t> &new_data) const {
+  bool evaluate(const std::vector<uint8_t> &old_data, const std::vector<uint8_t> &new_data) const {
     if (byte_offset_ >= new_data.size() || byte_offset_ >= old_data.size())
       return false;
     uint8_t old_masked = old_data[byte_offset_] & bitmask_;
     uint8_t new_masked = new_data[byte_offset_] & bitmask_;
     switch (edge_) {
-      case EDGE_RISING:  return old_masked == 0 && new_masked != 0;
+      case EDGE_RISING: return old_masked == 0 && new_masked != 0;
       case EDGE_FALLING: return old_masked != 0 && new_masked == 0;
-      case EDGE_ANY:     return old_masked != new_masked;
+      case EDGE_ANY: return old_masked != new_masked;
     }
     return false;
   }

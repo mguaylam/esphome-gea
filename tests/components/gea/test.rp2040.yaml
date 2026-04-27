@@ -1,5 +1,5 @@
 # Compile test — RP2040 (Raspberry Pi Pico).
-# Run: esphome compile tests/test.rp2040.yaml
+# Run: esphome compile tests/components/gea/test.rp2040.yaml
 
 esphome:
   name: gea-test

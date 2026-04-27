@@ -14,9 +14,15 @@ class GEASwitch : public switch_::Switch, public GEAEntity, public Component {
 
   // Receive ERD data from the bus — update switch state
   void on_erd_data(const std::vector<uint8_t> &data) override {
-    if (data.size() <= (size_t) byte_offset_)
+    if (data.size() <= (size_t)byte_offset_)
       return;
     publish_state(data[byte_offset_] == on_value_);
+  }
+
+  void dump_config() override {
+    LOG_SWITCH("", "GEA Switch", this);
+    dump_erd_config("switch.gea");
+    ESP_LOGCONFIG("switch.gea", "  Payload on/off: 0x%02X / 0x%02X", on_value_, off_value_);
   }
 
  protected:
