@@ -10,10 +10,12 @@
 
 An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances via the **GEA3 serial bus**, with native [Home Assistant](https://www.home-assistant.io/) integration.
 
-```mermaid
-flowchart LR
-    A[GE Appliance<br/><sub>dishwasher · washer<br/>dryer · oven</sub>] <-- "GEA3<br/>UART 230400" --> B[ESP32<br/><sub>esphome-gea</sub>]
-    B <-- "Wi-Fi<br/>native API" --> C[Home Assistant<br/><sub>sensors · switches<br/>selects · buttons</sub>]
+```text
+                   GEA3 UART                       Wi-Fi
+                  230400 baud                    native API
++--------------+               +-------------+              +----------------+
+| GE Appliance |<------------->|    ESP32    |<------------>| Home Assistant |
++--------------+               +-------------+              +----------------+
 ```
 
 ---
