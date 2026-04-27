@@ -13,8 +13,68 @@ An [ESPHome](https://esphome.io/) external component for monitoring and controll
 
 ---
 
+## What is this?
+
+Your GE dishwasher, washer, dryer, or oven has a small service port that speaks a protocol called **GEA3**. Through this port the appliance constantly publishes its state — door open/closed, cycle name, water temperature, time remaining, error codes — and accepts commands like "start the cycle" or "switch to Heavy Wash".
+
+This project lets you wire a cheap ESP32 board into that port and expose everything to Home Assistant as regular entities (sensors, switches, buttons, etc.). No cloud account, no SmartHQ app, fully local.
+
+Each piece of data on the bus is identified by a 16-bit number called an **ERD** (Entity Reference Designator). For example, `0x2012` might be the door state and `0x321B` the selected wash cycle. You'll see this term throughout the docs — just remember: **ERD = a register the appliance exposes**.
+
+---
+
+## Quick start
+
+The shortest possible config — read the door sensor and the selected wash cycle from a dishwasher:
+
+```yaml
+# 1. Pull in the component
+external_components:
+  - source: github://mguaylam/esphome-gea
+    components: [gea]
+
+# 2. Set up the UART (pin numbers depend on your board)
+uart:
+  id: uart_gea
+  tx_pin: GPIO21
+  rx_pin: GPIO20
+  baud_rate: 230400
+
+# 3. Define the GEA hub
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+
+# 4. Add some entities
+binary_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Door"
+    erd: 0x2012
+    bitmask: 0x01
+    device_class: door
+
+select:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Wash Cycle"
+    erd: 0x321B
+    options:
+      0x00: "AutoSense"
+      0x01: "Heavy"
+      0x02: "Normal"
+```
+
+Flash, plug into your appliance, and the entities appear in Home Assistant. **Don't know which ERDs your appliance uses?** Skip to [ERD Discovery](#erd-discovery) — the component automatically logs every ERD it sees on boot.
+
+> Looking for a complete, working example? See the configs under [`devices/`](devices/).
+
+---
+
 ## Table of Contents
 
+- [What is this?](#what-is-this)
+- [Quick start](#quick-start)
 - [Features](#features)
 - [Hardware](#hardware)
 - [Installation](#installation)
@@ -28,8 +88,9 @@ An [ESPHome](https://esphome.io/) external component for monitoring and controll
   - [Button](#button-write-only)
   - [Number](#number-read-write)
   - [Automation triggers](#automation-triggers)
-- [ERD Discovery](#erd-discovery)
 - [Diagnostics](#diagnostics)
+- [ERD Discovery](#erd-discovery)
+- [Troubleshooting](#troubleshooting)
 - [Testing](#testing)
 - [Devices](#devices)
 - [License](#license)
@@ -38,7 +99,7 @@ An [ESPHome](https://esphome.io/) external component for monitoring and controll
 
 ## Features
 
-GE appliances expose their state through **ERDs** (Entity Reference Designators) — 16-bit registers for data like temperatures, cycle states, and settings. This component maps those registers to Home Assistant entities.
+This component maps GE appliance ERDs to Home Assistant entities and handles the GEA3 protocol details for you.
 
 - **Full bidirectional control** — read sensor values, toggle switches, change cycle settings, trigger remote start/stop
 - **Auto-discovery** — subscribes to all ERDs on boot; unknown registers are logged for reverse-engineering
@@ -61,7 +122,7 @@ GE appliances expose their state through **ERDs** (Entity Reference Designators)
 | Part | Notes |
 |------|-------|
 | [Seeed XIAO ESP32-C3](https://wiki.seeedstudio.com/XIAO_ESP32C3_Getting_Started/) | Compact, 3.3 V, native USB |
-| FirstBuild GEA adapter | 8P8C breakout, LEDs, and supporting components all included |
+| FirstBuild GEA adapter | 8P8C (RJ45-style) breakout, status LEDs, and supporting components included |
 
 ### Wiring
 
@@ -80,7 +141,7 @@ The FirstBuild adapter also connects three status LEDs:
 | D1 | Wi-Fi status |
 | D2 | Bus status |
 
-> The GEA3 connector on GE appliances is typically accessible behind the appliance's service panel via an 8P8C jack. The FirstBuild breakout board makes this simple to tap into.
+> The GEA3 connector on GE appliances is typically a small jack behind the service panel. The FirstBuild breakout board makes it simple to tap into without cutting wires. **No need to open the appliance's main electronics** — the service port is designed for diagnostic access.
 
 ### UART Settings
 
@@ -553,16 +614,73 @@ esphome compile tests/components/gea/test.esp32-idf.yaml
 
 ## ERD Discovery
 
-**ERD** (Entity Reference Designator) is a 16-bit identifier for a data register on the appliance — like a temperature reading, machine state, or cycle selection.
-
-On boot the component sends a subscribe-all command. The appliance responds by publishing all supported ERDs. Any ERD not matched to a configured entity is logged at `INFO` level:
+Don't know which ERDs your appliance exposes? You don't have to. On boot the component sends a *subscribe-all* command and the appliance dumps every ERD it supports. Anything not matched to a configured entity gets logged at `INFO` level:
 
 ```text
 [I][gea:042]: Discovered ERD 0x2007: 00 00
 [I][gea:042]: Discovered ERD 0x200A: 00 00 00 00
 ```
 
-You can add these to your configuration as raw `text_sensor` entities to start reverse-engineering their meaning.
+**Workflow for a new appliance:**
+
+1. Flash a minimal config with just the `gea:` hub (no entities).
+2. Watch the logs (`esphome logs your-device.yaml`) — you'll see ERDs flow in.
+3. Operate the appliance (open the door, change cycles, start a wash) and note which values change.
+4. Add a `text_sensor` with `decode: raw` for each ERD you want to track:
+
+   ```yaml
+   text_sensor:
+     - platform: gea
+       gea_id: gea_hub
+       name: "Unknown 0x3035"
+       erd: 0x3035
+       decode: raw
+   ```
+
+5. Once you've decoded what each byte means, swap the raw text sensor for a proper sensor/binary_sensor/select.
+
+If you'd like richer log output (each ERD's documented name, type, and decoded value), enable the public ERD lookup table:
+
+```yaml
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  erd_lookup: true   # +75 KB flash, but logs become self-documenting
+```
+
+> The [erd-definitions](https://github.com/GEAppliances/erd-definitions) submodule provides ~3000 documented public ERDs — useful for naming things you see on the bus.
+
+---
+
+## Troubleshooting
+
+**Nothing happens, no logs from the GEA component**
+
+- Confirm `baud_rate: 230400` (not 19,200 — that's the older GEA2 protocol).
+- Check TX/RX aren't swapped. The ESP's TX goes to the appliance's RX and vice versa.
+- Verify GND is connected between the ESP and the appliance.
+- Check `is_bus_connected()` in a binary_sensor — `false` means no valid packet has arrived in the last 30 s.
+
+**Entities created but always show "unknown"**
+
+- The ERD address is probably wrong for your model. Run a discovery pass (see above) and grep the logs for activity when you trigger that state on the appliance.
+- For binary sensors, double-check the `byte_offset` and `bitmask` — the door bit might live in byte 1 of a multi-byte ERD, not byte 0.
+
+**Switch / select / number writes don't take effect**
+
+- Some ERDs are read-only at the appliance side; the write goes through but the appliance ignores it. There's no programmatic way to know in advance — try operating the appliance manually and note which ERD changes, then write to that ERD.
+- Some appliances expect writes to a *different* ERD than the read ERD. Use `write_erd:` to specify it.
+
+**Bus shows occasional CRC errors**
+
+- Small numbers (a few per hour) are normal on a long cable run.
+- A growing count usually points to a wiring/grounding issue. See the `get_crc_errors()` counter under [Diagnostics](#diagnostics).
+
+**"Delayed start" wakes up the appliance unexpectedly**
+
+- Don't expose washer ERD `0x2038` (or equivalent on other appliances) as a writable entity — writing to it brings the machine out of sleep mode whether you wanted to or not. Read-only is fine.
+
+Still stuck? [Open an issue](https://github.com/mguaylam/esphome-gea/issues) with your YAML and a snippet of the ESPHome logs (`esphome logs your-device.yaml`).
 
 ---
 
