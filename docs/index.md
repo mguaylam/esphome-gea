@@ -36,3 +36,16 @@ in the project README, then come back here for the full configuration reference.
 
 - [Protocol & internals](protocol.md) — GEA3 framing, command codes, connection lifecycle, request reliability.
 - [Testing](testing.md) — multi-platform compile-time integration tests.
+
+## Hardware adapters
+
+The component is hardware-agnostic — any TTL-level UART breakout to the
+appliance's GEA3 jack works. Two known-good options:
+
+- **[mulcmu/esphome-ge-laundry-uart](https://github.com/mulcmu/esphome-ge-laundry-uart)**
+  — open hardware (KiCad sources + gerbers). Recommended if you're comfortable
+  ordering PCBs and soldering. The original reverse-engineering of the GEA3
+  protocol on ESPHome was done by [@mulcmu](https://github.com/mulcmu); this
+  project builds on that foundation.
+- **[FirstBuild GEA adapter](https://firstbuild.com/)** — commercial 8P8C
+  breakout with status LEDs, ready to use out of the box.

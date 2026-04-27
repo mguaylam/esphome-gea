@@ -75,7 +75,23 @@ Flash, plug into your appliance, and the entities appear in Home Assistant. **Do
 | Part | Notes |
 |------|-------|
 | [Seeed XIAO ESP32-C3](https://wiki.seeedstudio.com/XIAO_ESP32C3_Getting_Started/) | Compact, 3.3 V, native USB |
-| FirstBuild GEA adapter | 8P8C (RJ45-style) breakout, status LEDs, supporting components included |
+| GEA adapter board | See **Adapter options** below |
+
+### Adapter options
+
+You need a small adapter to break out the appliance's GEA3 jack to the ESP. Two
+good options:
+
+- **[mulcmu/esphome-ge-laundry-uart](https://github.com/mulcmu/esphome-ge-laundry-uart)** — *recommended for tinkerers.*
+  Fully open hardware with KiCad sources and gerbers. Order the PCB from any
+  fab house and solder it yourself. Big thanks to [@mulcmu](https://github.com/mulcmu)
+  whose reverse-engineering work made this whole ecosystem possible.
+- **[FirstBuild GEA adapter](https://firstbuild.com/)** — *recommended if you
+  prefer not to solder.* Commercial 8P8C breakout with status LEDs and all
+  supporting components.
+
+Both expose the same TX/RX/GND pinout to the ESP32 — the wiring below applies
+to either one.
 
 ### Wiring
 
