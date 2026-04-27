@@ -20,9 +20,10 @@ class GEASwitch : public switch_::Switch, public GEAEntity, public Component {
   }
 
   void dump_config() override {
+    static const char *const TAG = "switch.gea";
     LOG_SWITCH("", "GEA Switch", this);
-    dump_erd_config("switch.gea");
-    ESP_LOGCONFIG("switch.gea", "  Payload on/off: 0x%02X / 0x%02X", on_value_, off_value_);
+    dump_erd_config(TAG);
+    ESP_LOGCONFIG(TAG, "  Payload on/off: 0x%02X / 0x%02X", on_value_, off_value_);
   }
 
  protected:

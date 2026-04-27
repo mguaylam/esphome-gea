@@ -19,10 +19,11 @@ class GEABinarySensor : public binary_sensor::BinarySensor, public GEAEntity, pu
   }
 
   void dump_config() override {
+    static const char *const TAG = "binary_sensor.gea";
     LOG_BINARY_SENSOR("", "GEA Binary Sensor", this);
-    dump_erd_config("binary_sensor.gea");
+    dump_erd_config(TAG);
     if (inverted_)
-      ESP_LOGCONFIG("binary_sensor.gea", "  Inverted: yes");
+      ESP_LOGCONFIG(TAG, "  Inverted: yes");
   }
 
  private:

@@ -51,8 +51,9 @@ class GEATextSensor : public text_sensor::TextSensor, public GEAEntity, public C
   }
 
   void dump_config() override {
+    static const char *const TAG = "text_sensor.gea";
     LOG_TEXT_SENSOR("", "GEA Text Sensor", this);
-    dump_erd_config("text_sensor.gea");
+    dump_erd_config(TAG);
   }
 
  private:

@@ -18,8 +18,9 @@ class GEANumber : public number::Number, public GEAEntity, public Component {
   }
 
   void dump_config() override {
+    static const char *const TAG = "number.gea";
     LOG_NUMBER("", "GEA Number", this);
-    dump_erd_config("number.gea");
+    dump_erd_config(TAG);
   }
 
  protected:

@@ -27,9 +27,10 @@ class GEASelect : public select::Select, public GEAEntity, public Component {
   }
 
   void dump_config() override {
+    static const char *const TAG = "select.gea";
     LOG_SELECT("", "GEA Select", this);
-    dump_erd_config("select.gea");
-    ESP_LOGCONFIG("select.gea", "  Options: %zu", options_.size());
+    dump_erd_config(TAG);
+    ESP_LOGCONFIG(TAG, "  Options: %zu", options_.size());
   }
 
  protected:

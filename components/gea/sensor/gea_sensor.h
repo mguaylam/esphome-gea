@@ -16,8 +16,9 @@ class GEASensor : public sensor::Sensor, public GEAEntity, public Component {
     publish_state(value);
   }
   void dump_config() override {
+    static const char *const TAG = "sensor.gea";
     LOG_SENSOR("", "GEA Sensor", this);
-    dump_erd_config("sensor.gea");
+    dump_erd_config(TAG);
   }
 };
 

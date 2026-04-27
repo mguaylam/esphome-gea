@@ -14,9 +14,10 @@ class GEAButton : public button::Button, public Component {
   void add_payload_byte(uint8_t b) { payload_.push_back(b); }
 
   void dump_config() override {
+    static const char *const TAG = "button.gea";
     LOG_BUTTON("", "GEA Button", this);
-    ESP_LOGCONFIG("button.gea", "  ERD: 0x%04X", erd_);
-    ESP_LOGCONFIG("button.gea", "  Payload: %zuB", payload_.size());
+    ESP_LOGCONFIG(TAG, "  ERD: 0x%04X", erd_);
+    ESP_LOGCONFIG(TAG, "  Payload: %zuB", payload_.size());
   }
 
  protected:
