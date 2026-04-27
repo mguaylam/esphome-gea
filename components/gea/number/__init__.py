@@ -15,6 +15,8 @@ from .. import (
     CONF_DECODE,
     CONF_BYTE_OFFSET,
     CONF_WRITE_ERD,
+    CONF_MULTIPLIER,
+    CONF_OFFSET,
     DECODE_TYPES,
 )
 
@@ -36,6 +38,8 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_MAX_VALUE, default=255): cv.float_,
             cv.Optional(CONF_STEP, default=1): cv.float_,
             cv.Optional(CONF_WRITE_ERD): cv.hex_uint16_t,
+            cv.Optional(CONF_MULTIPLIER, default=1.0): cv.float_,
+            cv.Optional(CONF_OFFSET, default=0.0): cv.float_,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -55,6 +59,8 @@ async def to_code(config):
     cg.add(var.set_erd(config[CONF_ERD]))
     cg.add(var.set_decode(config[CONF_DECODE]))
     cg.add(var.set_byte_offset(config[CONF_BYTE_OFFSET]))
+    cg.add(var.set_multiplier(config[CONF_MULTIPLIER]))
+    cg.add(var.set_offset(config[CONF_OFFSET]))
 
     if CONF_WRITE_ERD in config:
         cg.add(var.set_write_erd(config[CONF_WRITE_ERD]))

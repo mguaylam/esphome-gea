@@ -71,6 +71,8 @@ class GEAEntity {
   void set_bitmask(uint8_t bitmask) { bitmask_ = bitmask; }
   void set_byte_offset(uint8_t offset) { byte_offset_ = offset; }
   void set_data_size(uint8_t size) { data_size_ = size; }
+  void set_multiplier(float m) { multiplier_ = m; }
+  void set_offset(float o) { offset_ = o; }
   void set_parent(GEAComponent *parent) { parent_ = parent; }
 
   uint16_t get_erd() const { return erd_; }
@@ -88,9 +90,12 @@ class GEAEntity {
   uint8_t bitmask_{0xFF};
   uint8_t byte_offset_{0};
   uint8_t data_size_{0};  // 0 = auto from decode type
+  float multiplier_{1.0f};
+  float offset_{0.0f};
   GEAComponent *parent_{nullptr};
 
-  // Decode the ERD byte vector into a numeric float value
+  // Decode the ERD byte vector into a numeric float value, applying
+  // multiplier/offset (output = raw * multiplier + offset).
   float decode_as_float(const std::vector<uint8_t> &data) const;
 
   // Decode the ERD byte vector into a hex string like "0x0100"
@@ -152,6 +157,17 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // Logs all discovered ERDs at INFO level. Useful to call on api: on_client_connected
   // so the list appears each time you open the console.
   void log_erds() const;
+
+  // Counters for bus health diagnostics. Expose via lambda in a template sensor:
+  //   sensor:
+  //     - platform: template
+  //       name: "GEA CRC Errors"
+  //       entity_category: diagnostic
+  //       lambda: 'return id(gea_hub).get_crc_errors();'
+  uint32_t get_rx_bytes() const { return rx_byte_count_; }
+  uint32_t get_crc_errors() const { return crc_errors_; }
+  uint32_t get_tx_retries() const { return tx_retries_; }
+  uint32_t get_dropped_requests() const { return dropped_requests_; }
 
   // ---- on_erd_change triggers (registered from Python codegen) ------------
   void register_erd_change_trigger(ErdChangeTrigger *trigger) {
@@ -229,6 +245,11 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // Raw byte counter — reported periodically so we can confirm UART is alive.
   uint32_t rx_byte_count_{0};
   uint32_t last_stats_ms_{0};
+
+  // Diagnostics counters exposed via get_*() accessors.
+  uint32_t crc_errors_{0};
+  uint32_t tx_retries_{0};
+  uint32_t dropped_requests_{0};
 
   // ERD discovery map: ERD address → most recently received data bytes.
   // Populated on first publication of each ERD; updated silently thereafter.

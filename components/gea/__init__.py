@@ -106,6 +106,8 @@ CONF_DEST_ADDRESS = "dest_address"
 CONF_SRC_ADDRESS = "src_address"
 CONF_ON_ERD_CHANGE = "on_erd_change"
 CONF_EDGE = "edge"
+CONF_MULTIPLIER = "multiplier"
+CONF_OFFSET = "offset"
 
 GeaDecodeType = gea_ns.enum("GeaDecodeType")
 

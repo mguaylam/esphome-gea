@@ -16,6 +16,8 @@ from .. import (
     CONF_ERD,
     CONF_DECODE,
     CONF_BYTE_OFFSET,
+    CONF_MULTIPLIER,
+    CONF_OFFSET,
     DECODE_TYPES,
 )
 
@@ -33,6 +35,8 @@ CONFIG_SCHEMA = (
                 DECODE_TYPES, lower=True
             ),
             cv.Optional(CONF_BYTE_OFFSET, default=0): cv.uint8_t,
+            cv.Optional(CONF_MULTIPLIER, default=1.0): cv.float_,
+            cv.Optional(CONF_OFFSET, default=0.0): cv.float_,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -48,4 +52,6 @@ async def to_code(config):
     cg.add(var.set_erd(config[CONF_ERD]))
     cg.add(var.set_decode(config[CONF_DECODE]))
     cg.add(var.set_byte_offset(config[CONF_BYTE_OFFSET]))
+    cg.add(var.set_multiplier(config[CONF_MULTIPLIER]))
+    cg.add(var.set_offset(config[CONF_OFFSET]))
     cg.add(hub.register_entity(var))

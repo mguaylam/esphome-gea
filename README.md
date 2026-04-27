@@ -28,6 +28,8 @@ An [ESPHome](https://esphome.io/) external component for monitoring and controll
   - [Number](#number-read-write)
   - [Automation triggers](#automation-triggers)
 - [ERD Discovery](#erd-discovery)
+- [Diagnostics](#diagnostics)
+- [Testing](#testing)
 - [Devices](#devices)
 - [License](#license)
 
@@ -41,10 +43,11 @@ GE appliances expose their state through **ERDs** (Entity Reference Designators)
 - **Auto-discovery** — subscribes to all ERDs on boot; unknown registers are logged for reverse-engineering
 - **Plug-and-play addressing** — automatically detects appliance bus address from first valid packet
 - **Resilient** — periodic re-subscription recovers state after appliance power cycles
-- **Flexible decoding** — 13 numeric types (`uint8`, `uint16_be`, `int32_le`, …), raw hex, ASCII strings, and enum option maps
+- **Flexible decoding** — 13 numeric types (`uint8`, `uint16_be`, `int32_le`, …), raw hex, ASCII strings, enum option maps, plus optional `multiplier`/`offset` for scaled values
 - **Multiple entity platforms** — sensor, binary sensor, switch, select, text sensor, button, number
 - **Edge-triggered automations** — `on_erd_change` fires on rising/falling/any bitmask transitions
 - **Bus health indicator** — `is_bus_connected()` lambda for status LEDs
+- **Diagnostic counters** — `get_rx_bytes()`, `get_crc_errors()`, `get_tx_retries()`, `get_dropped_requests()` exposable as template sensors
 - **Optional ERD lookup table** — embed the full GE ERD definition set for richer diagnostic logs (+75 KB flash)
 - **Native HA integration** — device classes, state classes, diagnostic categories all supported
 
@@ -150,9 +153,25 @@ sensor:
     byte_offset: 0
     unit_of_measurement: s
     state_class: total_increasing
+
+  # Scaled value: many GE ERDs encode temperature × 10
+  - platform: gea
+    gea_id: gea_hub
+    name: "Water Temperature"
+    erd: 0x3035
+    decode: uint16_be
+    multiplier: 0.1
+    offset: 0
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
 ```
 
 **`decode` types:** `uint8`, `uint16_be`, `uint16_le`, `uint32_be`, `uint32_le`, `int8`, `int16_be`, `int16_le`, `int32_be`, `int32_le`, `bool`
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `multiplier` | `1.0` | Multiplied with the decoded raw value |
+| `offset` | `0.0` | Added after multiplication: `published = raw × multiplier + offset` |
 
 ---
 
@@ -281,6 +300,8 @@ number:
     step: 1
     entity_category: diagnostic
 ```
+
+`multiplier` and `offset` are also accepted on numbers; the inverse transform is applied on write so the user-visible scaled value is converted back to the raw bytes the appliance expects.
 
 ---
 
@@ -451,6 +472,65 @@ Every outgoing request (read, write, subscribe-all) goes through a single-in-fli
 Writes initiated from Home Assistant are non-blocking: the entity returns immediately and the queue transmits in the background. A dropped write (10 retries exhausted) is logged at `WARN` level.
 
 </details>
+
+---
+
+## Diagnostics
+
+The hub exposes per-bus counters callable from YAML lambdas. Pair them with `platform: template` sensors and `entity_category: diagnostic` to surface bus health in Home Assistant:
+
+```yaml
+sensor:
+  - platform: template
+    name: "GEA RX Bytes"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    lambda: 'return id(gea_hub).get_rx_bytes();'
+    update_interval: 30s
+
+  - platform: template
+    name: "GEA CRC Errors"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    lambda: 'return id(gea_hub).get_crc_errors();'
+    update_interval: 30s
+
+  - platform: template
+    name: "GEA TX Retries"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    lambda: 'return id(gea_hub).get_tx_retries();'
+    update_interval: 30s
+
+  - platform: template
+    name: "GEA Dropped Requests"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    lambda: 'return id(gea_hub).get_dropped_requests();'
+    update_interval: 30s
+```
+
+| Accessor | Increments on |
+|----------|---------------|
+| `get_rx_bytes()` | every byte received on the UART |
+| `get_crc_errors()` | a framed packet whose CRC does not match |
+| `get_tx_retries()` | a pending request times out and is resent |
+| `get_dropped_requests()` | a pending request exhausts all retries |
+
+A non-zero **CRC errors** counter on a stable bus usually points to a wiring/grounding issue. A growing **dropped requests** counter while the appliance is awake is more concerning and warrants protocol-level inspection.
+
+---
+
+## Testing
+
+Host-side unit tests cover the protocol primitives (CRC-16/CCITT, byte escaping, escape/unescape roundtrip):
+
+```bash
+cd tests
+make test
+```
+
+Requires only a host C++17 compiler — no ESPHome toolchain.
 
 ---
 
