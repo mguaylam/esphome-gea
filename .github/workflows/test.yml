@@ -7,11 +7,27 @@ on:
     branches: [main]
 
 jobs:
-  unit-tests:
-    name: Host unit tests
+  compile-test:
+    name: Compile tests/test.yaml
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
-      - name: Run protocol + decoder tests
-        run: make -C tests test
+      - name: Cache ESPHome build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.esphome
+            .esphome
+          key: esphome-test-${{ hashFiles('tests/test.yaml', 'components/**') }}
+          restore-keys: |
+            esphome-test-
+
+      - name: Install ESPHome
+        run: pip install esphome
+
+      - name: Compile tests/test.yaml
+        run: esphome compile tests/test.yaml

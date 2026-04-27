@@ -1,5 +1,4 @@
 #include "gea.h"
-#include "protocol.h"
 #ifdef GEA_ERD_LOOKUP
 #include "erd_table.h"
 #endif
@@ -20,16 +19,112 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
 // =============================================================================
 
 float GEAEntity::decode_as_float(const std::vector<uint8_t> &data) const {
-  return decoder::decode_float(decode_, data, byte_offset_, bitmask_, multiplier_, offset_);
+  if (data.size() <= (size_t) byte_offset_)
+    return 0.0f;
+  const uint8_t *d = data.data() + byte_offset_;
+  size_t rem = data.size() - byte_offset_;
+  float raw = 0.0f;
+
+  switch (decode_) {
+    case GeaDecodeType::UINT8:
+      raw = (rem >= 1) ? (float) d[0] : 0.0f;
+      break;
+    case GeaDecodeType::UINT16_BE:
+      raw = (rem >= 2) ? (float) ((uint16_t) d[0] << 8 | d[1]) : 0.0f;
+      break;
+    case GeaDecodeType::UINT16_LE:
+      raw = (rem >= 2) ? (float) ((uint16_t) d[1] << 8 | d[0]) : 0.0f;
+      break;
+    case GeaDecodeType::UINT32_BE:
+      if (rem >= 4)
+        raw = (float) ((uint32_t) d[0] << 24 | (uint32_t) d[1] << 16 | (uint32_t) d[2] << 8 | d[3]);
+      else if (rem == 3)
+        raw = (float) ((uint32_t) d[0] << 16 | (uint32_t) d[1] << 8 | d[2]);
+      break;
+    case GeaDecodeType::UINT32_LE:
+      raw = (rem >= 4)
+          ? (float) ((uint32_t) d[3] << 24 | (uint32_t) d[2] << 16 | (uint32_t) d[1] << 8 | d[0])
+          : 0.0f;
+      break;
+    case GeaDecodeType::INT8:
+      raw = (rem >= 1) ? (float) (int8_t) d[0] : 0.0f;
+      break;
+    case GeaDecodeType::INT16_BE:
+      raw = (rem >= 2) ? (float) (int16_t) ((uint16_t) d[0] << 8 | d[1]) : 0.0f;
+      break;
+    case GeaDecodeType::INT16_LE:
+      raw = (rem >= 2) ? (float) (int16_t) ((uint16_t) d[1] << 8 | d[0]) : 0.0f;
+      break;
+    case GeaDecodeType::INT32_BE:
+      raw = (rem >= 4)
+          ? (float) (int32_t) ((uint32_t) d[0] << 24 | (uint32_t) d[1] << 16 | (uint32_t) d[2] << 8 | d[3])
+          : 0.0f;
+      break;
+    case GeaDecodeType::INT32_LE:
+      raw = (rem >= 4)
+          ? (float) (int32_t) ((uint32_t) d[3] << 24 | (uint32_t) d[2] << 16 | (uint32_t) d[1] << 8 | d[0])
+          : 0.0f;
+      break;
+    case GeaDecodeType::BOOL:
+      // BOOL is unscaled — masked bit, returned as 0 or 1.
+      return (rem >= 1) ? ((d[0] & bitmask_) ? 1.0f : 0.0f) : 0.0f;
+    default:
+      return 0.0f;
+  }
+  return raw * multiplier_ + offset_;
 }
 
 std::string GEAEntity::decode_as_hex(const std::vector<uint8_t> &data) const {
-  return decoder::decode_hex(data);
+  if (data.empty())
+    return "0x";
+  std::string result = "0x";
+  char hex[3];
+  for (uint8_t b : data) {
+    snprintf(hex, sizeof(hex), "%02X", b);
+    result += hex;
+  }
+  return result;
 }
 
 void GEAEntity::encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const {
-  auto bytes = decoder::encode_bytes(decode_, data_size_, val);
-  out.insert(out.end(), bytes.begin(), bytes.end());
+  uint8_t n = data_size_;
+  if (n == 0) {
+    switch (decode_) {
+      case GeaDecodeType::UINT16_BE:
+      case GeaDecodeType::INT16_BE:
+      case GeaDecodeType::UINT16_LE:
+      case GeaDecodeType::INT16_LE:
+        n = 2;
+        break;
+      case GeaDecodeType::UINT32_BE:
+      case GeaDecodeType::INT32_BE:
+      case GeaDecodeType::UINT32_LE:
+      case GeaDecodeType::INT32_LE:
+        n = 4;
+        break;
+      default:
+        n = 1;
+        break;
+    }
+  }
+  bool le = false;
+  switch (decode_) {
+    case GeaDecodeType::UINT16_LE:
+    case GeaDecodeType::INT16_LE:
+    case GeaDecodeType::UINT32_LE:
+    case GeaDecodeType::INT32_LE:
+      le = true;
+      break;
+    default:
+      break;
+  }
+  if (le) {
+    for (uint8_t i = 0; i < n; i++)
+      out.push_back((val >> (i * 8)) & 0xFF);
+  } else {
+    for (int i = (int) n - 1; i >= 0; i--)
+      out.push_back((val >> (i * 8)) & 0xFF);
+  }
 }
 
 // =============================================================================
@@ -38,8 +133,16 @@ void GEAEntity::encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const {
 
 // CRC-16/CCITT: polynomial 0x1021, seed 0x1021
 // Covers [DEST][LEN][SRC][PAYLOAD...] (everything between STX and CRC bytes).
+// CRC-16/CCITT, polynomial 0x1021, seed 0x1021, MSB-first output.
 uint16_t GEAComponent::crc16_(const uint8_t *data, size_t len) {
-  return protocol::crc16(data, len);
+  uint16_t crc = GEA_CRC_SEED;
+  for (size_t i = 0; i < len; i++) {
+    crc ^= (uint16_t) data[i] << 8;
+    for (int j = 0; j < 8; j++) {
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
+    }
+  }
+  return crc;
 }
 
 // Escape control bytes {0xE0, 0xE1, 0xE2, 0xE3}: prefix with GEA_ESC (0xE0),
@@ -50,7 +153,17 @@ uint16_t GEAComponent::crc16_(const uint8_t *data, size_t len) {
 //   0xE2 → 0xE0 0xE2
 //   0xE3 → 0xE0 0xE3
 std::vector<uint8_t> GEAComponent::escape_(const std::vector<uint8_t> &raw) {
-  return protocol::escape(raw);
+  std::vector<uint8_t> out;
+  out.reserve(raw.size() + 4);
+  for (uint8_t b : raw) {
+    if (b >= 0xE0 && b <= 0xE3) {
+      out.push_back(GEA_ESC);
+      out.push_back(b);  // receiver state machine handles unescape
+    } else {
+      out.push_back(b);
+    }
+  }
+  return out;
 }
 
 // =============================================================================

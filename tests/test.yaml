@@ -1,0 +1,252 @@
+# Compile-time integration test for the gea external component.
+# Exercises every platform, decode type, and option so the CI catches
+# schema and codegen regressions. Run from repo root:
+#   esphome compile tests/test.yaml
+
+esphome:
+  name: gea-test
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [gea]
+
+logger:
+
+# ---------------------------------------------------------------------------
+# Hub — exercises src/dest address and on_erd_change with each edge type.
+# ---------------------------------------------------------------------------
+uart:
+  id: uart_gea
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 230400
+
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  src_address: 0xBB
+  dest_address: 0xC0
+  erd_lookup: false
+  on_erd_change:
+    - erd: 0x2154
+      byte_offset: 1
+      bitmask: 0x20
+      edge: rising
+      then:
+        - logger.log: "rising edge fired"
+    - erd: 0x2154
+      byte_offset: 1
+      bitmask: 0x20
+      edge: falling
+      then:
+        - logger.log: "falling edge fired"
+    - erd: 0x2155
+      edge: any
+      then:
+        - logger.log: "any edge fired"
+
+# ---------------------------------------------------------------------------
+# Sensor — exercises every numeric decode type plus multiplier/offset.
+# ---------------------------------------------------------------------------
+sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: "u8"
+    erd: 0x0001
+    decode: uint8
+  - platform: gea
+    gea_id: gea_hub
+    name: "u16_be scaled"
+    erd: 0x0002
+    decode: uint16_be
+    multiplier: 0.1
+    offset: 0
+  - platform: gea
+    gea_id: gea_hub
+    name: "u16_le"
+    erd: 0x0003
+    decode: uint16_le
+  - platform: gea
+    gea_id: gea_hub
+    name: "u32_be"
+    erd: 0x0004
+    decode: uint32_be
+  - platform: gea
+    gea_id: gea_hub
+    name: "u32_le"
+    erd: 0x0005
+    decode: uint32_le
+  - platform: gea
+    gea_id: gea_hub
+    name: "i8"
+    erd: 0x0006
+    decode: int8
+  - platform: gea
+    gea_id: gea_hub
+    name: "i16_be with offset"
+    erd: 0x0007
+    decode: int16_be
+    multiplier: 0.5
+    offset: 100
+  - platform: gea
+    gea_id: gea_hub
+    name: "i16_le"
+    erd: 0x0008
+    decode: int16_le
+  - platform: gea
+    gea_id: gea_hub
+    name: "i32_be"
+    erd: 0x0009
+    decode: int32_be
+  - platform: gea
+    gea_id: gea_hub
+    name: "i32_le"
+    erd: 0x000A
+    decode: int32_le
+  - platform: gea
+    gea_id: gea_hub
+    name: "byte_offset"
+    erd: 0x000B
+    decode: uint16_be
+    byte_offset: 2
+
+  # Diagnostic counters — surfaced via lambda-bound template sensors.
+  - platform: template
+    name: "GEA RX Bytes"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    lambda: 'return id(gea_hub).get_rx_bytes();'
+    update_interval: 30s
+  - platform: template
+    name: "GEA CRC Errors"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    lambda: 'return id(gea_hub).get_crc_errors();'
+    update_interval: 30s
+  - platform: template
+    name: "GEA TX Retries"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    lambda: 'return id(gea_hub).get_tx_retries();'
+    update_interval: 30s
+  - platform: template
+    name: "GEA Dropped Requests"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    lambda: 'return id(gea_hub).get_dropped_requests();'
+    update_interval: 30s
+
+# ---------------------------------------------------------------------------
+# Binary sensor — bitmask + inverted.
+# ---------------------------------------------------------------------------
+binary_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Door"
+    erd: 0x2012
+    bitmask: 0x01
+    device_class: door
+  - platform: gea
+    gea_id: gea_hub
+    name: "Inverted bit"
+    erd: 0x2012
+    bitmask: 0x02
+    inverted: true
+  # Bus health via lambda.
+  - platform: template
+    name: "Bus connected"
+    lambda: 'return id(gea_hub).is_bus_connected();'
+
+# ---------------------------------------------------------------------------
+# Switch — read+write, distinct write_erd.
+# ---------------------------------------------------------------------------
+switch:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Boolean toggle"
+    erd: 0x3230
+    byte_offset: 0
+    bitmask: 0x01
+  - platform: gea
+    gea_id: gea_hub
+    name: "Distinct write_erd"
+    erd: 0x3231
+    write_erd: 0x3232
+    bitmask: 0x01
+
+# ---------------------------------------------------------------------------
+# Select — option map.
+# ---------------------------------------------------------------------------
+select:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Wash Cycle"
+    erd: 0x321B
+    decode: uint8
+    options:
+      0x00: "AutoSense"
+      0x01: "Heavy"
+      0x02: "Normal"
+
+# ---------------------------------------------------------------------------
+# Text sensor — ascii / raw / enum.
+# ---------------------------------------------------------------------------
+text_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycle Name"
+    erd: 0x301C
+    decode: ascii
+  - platform: gea
+    gea_id: gea_hub
+    name: "Raw State"
+    erd: 0x3001
+    decode: raw
+  - platform: gea
+    gea_id: gea_hub
+    name: "Machine State"
+    erd: 0x2000
+    decode: uint8
+    options:
+      0x00: "Idle"
+      0x01: "Running"
+
+# ---------------------------------------------------------------------------
+# Button — fixed payload write.
+# ---------------------------------------------------------------------------
+button:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Remote Start"
+    erd: 0x2149
+    data: [0x01]
+
+# ---------------------------------------------------------------------------
+# Number — read+write with multiplier/offset (verifies inverse transform on write).
+# ---------------------------------------------------------------------------
+number:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycle Parameter"
+    erd: 0xD004
+    decode: uint16_be
+    min_value: 0
+    max_value: 65535
+    step: 1
+  - platform: gea
+    gea_id: gea_hub
+    name: "Scaled number"
+    erd: 0xD005
+    decode: uint16_be
+    multiplier: 0.1
+    offset: 0
+    min_value: 0
+    max_value: 100
+    step: 0.1

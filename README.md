@@ -523,22 +523,15 @@ A non-zero **CRC errors** counter on a stable bus usually points to a wiring/gro
 
 ## Testing
 
-Host-side unit tests verify the protocol and decoding logic without requiring an ESP32 or the ESPHome toolchain. They run on every PR via GitHub Actions and locally with:
+Following the ESPHome convention, tests are **compile-time integration tests**: a single YAML at [`tests/test.yaml`](tests/test.yaml) instantiates every platform, decode type, and option (multiplier/offset, on_erd_change with each edge, distinct read/write ERDs, diagnostic counters via lambda, etc.). If the schema, codegen, or generated C++ regress, the build breaks.
+
+Run locally with:
 
 ```bash
-make -C tests test
+esphome compile tests/test.yaml
 ```
 
-Two suites are wired in:
-
-| Binary | Covers |
-|--------|--------|
-| `test_protocol` | CRC-16/CCITT seed and known vectors, single-bit corruption detection, byte escaping, escape/unescape roundtrip, full TX→RX frame roundtrip with embedded control bytes |
-| `test_decoder` | All 11 numeric decode types (BE/LE, signed/unsigned, 8/16/32-bit), `multiplier`/`offset` transform on read, `reverse_scale` on write, encode→decode roundtrip, BOOL bit isolation, `byte_offset` selection and OOB safety, hex formatting, edge triggers (rising/falling/any) with bitmask isolation |
-
-The pure logic lives in [`components/gea/protocol.h`](components/gea/protocol.h) and [`components/gea/decoder.h`](components/gea/decoder.h) so it's testable in isolation; the ESPHome-facing `GEAEntity`/`GEAComponent` classes are thin wrappers that delegate to these.
-
-Requires only a host C++17 compiler (`g++` or `clang++`).
+CI runs the same compile job plus the two real device YAMLs ([dishwasher](devices/dishwasher/PDP715SYV0FS.yaml), [washer](devices/washer/PFQ97HSPVDS.yaml)) on every PR.
 
 ---
 
