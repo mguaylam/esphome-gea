@@ -10,14 +10,6 @@
 
 An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances via the **GEA3 serial bus**, with native [Home Assistant](https://www.home-assistant.io/) integration.
 
-```text
-                   GEA3 UART                       Wi-Fi
-                  230400 baud                    native API
-+--------------+               +-------------+              +----------------+
-| GE Appliance |<------------->|    ESP32    |<------------>| Home Assistant |
-+--------------+               +-------------+              +----------------+
-```
-
 ---
 
 ## What is this?
