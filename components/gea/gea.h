@@ -316,7 +316,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   enum class DiscoveryState { SCANNING, DONE };
   DiscoveryState discovery_state_{DiscoveryState::SCANNING};
   size_t discovery_index_{0};
-  std::vector<uint8_t> discovery_bitmap_;     // one bit per table entry
+  std::vector<uint8_t> discovery_bitmap_;       // one bit per table entry
   std::vector<uint16_t> discovery_found_erds_;  // ERDs that responded — info only
   ESPPreferenceObject discovery_pref_;
 
