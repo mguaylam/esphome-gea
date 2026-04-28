@@ -41,3 +41,12 @@ jobs:
 
       - name: Compile ${{ matrix.config }}
         run: esphome compile ${{ matrix.config }}
+
+  compile-test-done:
+    needs: [compile-test]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - run: |
+          result="${{ needs.compile-test.result }}"
+          if [[ "$result" == "success" ]]; then exit 0; else exit 1; fi
