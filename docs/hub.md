@@ -29,10 +29,11 @@ gea:
 
 ```yaml
 # GEA2 — older appliances (19200 baud, half-duplex, polled)
+# Pin numbers depend on your adapter board — see the UART section below.
 uart:
   id: uart_gea
-  tx_pin: GPIO21
-  rx_pin: GPIO20
+  tx_pin: GPIO9   # FirstBuild adapter
+  rx_pin: GPIO10
   baud_rate: 19200
 
 gea:
@@ -65,6 +66,11 @@ gea:
 - **erd_lookup** (*Optional*, boolean): Embed the public GE ERD definition set
   (~75 KB flash) so discovery logs include each ERD's documented name, type,
   and decoded value. Defaults to `false`.
+- **gea2_discovery** (*Optional*, boolean — GEA2 only): Scan all 2 444 known
+  GEA2 ERDs on first boot, persist the responsive ones to flash (NVS), then
+  poll only those going forward. Takes ~20–30 minutes on first run; subsequent
+  boots load the saved list instantly and skip the scan. Defaults to `false`.
+  See [ERD Discovery](erd-discovery.md) for the full workflow.
 - **on_erd_change** (*Optional*, [Automation](automation.md)):
   Fires when a specific bit/byte within an ERD's value transitions.
   See [Automations](automation.md). On GEA2, the watched ERD is automatically
@@ -78,18 +84,34 @@ gea:
 | `gea2`   | 19200  | 8N1     | Half-duplex shared bus — the carrier board (mulcmu/Firstbuild) handles direction switching. |
 
 ```yaml
-# GEA3
+# GEA3 — XIAO ESP32-C3 hardware UART pins
 uart:
   id: uart_gea
   tx_pin: GPIO21
   rx_pin: GPIO20
   baud_rate: 230400
+```
 
-# GEA2
+For GEA2, the correct pins depend on your adapter board:
+
+| Adapter | TX pin | RX pin |
+|---------|--------|--------|
+| [FirstBuild GEA adapter](https://firstbuild.com/) | GPIO9 | GPIO10 |
+| [mulcmu adapter](https://github.com/mulcmu/esphome-ge-laundry-uart) | GPIO5 (or GPIO9 via solder bridge) | GPIO10 |
+
+```yaml
+# GEA2 — FirstBuild adapter
 uart:
   id: uart_gea
-  tx_pin: GPIO21
-  rx_pin: GPIO20
+  tx_pin: GPIO9
+  rx_pin: GPIO10
+  baud_rate: 19200
+
+# GEA2 — mulcmu adapter (default Tx; see schematic for solder bridge option)
+uart:
+  id: uart_gea
+  tx_pin: GPIO5
+  rx_pin: GPIO10
   baud_rate: 19200
 ```
 

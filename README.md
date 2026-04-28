@@ -103,8 +103,8 @@ to either one.
 > The GEA3 connector is typically a small jack behind the appliance's service panel. The FirstBuild breakout makes tapping into it straightforward — **no need to open the main electronics**.
 
 UART settings:
-- **GEA3 (default)**: 230,400 baud, 8N1, full-duplex.
-- **GEA2 (older appliances)**: 19,200 baud, 8N1, half-duplex. Set `protocol: gea2` and `dest_address` on the hub — see [docs/hub.md](docs/hub.md).
+- **GEA3 (default)**: 230,400 baud, 8N1, full-duplex. Use the XIAO's hardware UART pins: TX = GPIO21, RX = GPIO20.
+- **GEA2 (older appliances)**: 19,200 baud, 8N1, half-duplex. Pin numbers depend on your adapter — see [docs/hub.md](docs/hub.md) for the adapter-specific wiring table. Set `protocol: gea2` and `dest_address` on the hub.
 
 ---
 

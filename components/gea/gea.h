@@ -4,6 +4,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/optional.h"
 #include "esphome/core/automation.h"
+#include "esphome/core/preferences.h"
 #include "esphome/components/uart/uart.h"
 #include <string>
 #include <vector>
@@ -151,6 +152,7 @@ struct PendingRequest {
   std::vector<uint8_t> body;
   uint8_t retries_left;
   uint32_t sent_at_ms;
+  bool is_discovery{false};
 };
 
 // ---------------------------------------------------------------------------
@@ -173,6 +175,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   void set_src_address(uint8_t addr) { src_addr_ = addr; }
   void set_protocol(Protocol p) { protocol_ = p; }
   void set_poll_interval(uint32_t ms) { poll_interval_ms_ = ms; }
+  void set_gea2_discovery(bool enabled) { gea2_discovery_ = enabled; }
 
   // ---- Child entity registration ------------------------------------------
   void register_entity(GEAEntity *entity);
@@ -303,6 +306,29 @@ class GEAComponent : public uart::UARTDevice, public Component {
   bool poll_list_built_{false};
   void build_poll_list_();
   void poll_next_();
+
+  // GEA2 ERD discovery (opt-in via gea2_discovery: true in YAML).
+  // On first boot: scans GEA2_DISCOVERY_TABLE, saves responsive ERDs to NVS.
+  // On subsequent boots: loads saved list and skips the scan.
+  bool gea2_discovery_{false};
+
+#ifdef GEA_GEA2_DISCOVERY
+  enum class DiscoveryState { SCANNING, DONE };
+  DiscoveryState discovery_state_{DiscoveryState::SCANNING};
+  size_t discovery_index_{0};
+  std::vector<uint8_t> discovery_bitmap_;     // one bit per table entry
+  std::vector<uint16_t> discovery_found_erds_;  // ERDs that responded — info only
+  ESPPreferenceObject discovery_pref_;
+
+  void discovery_init_();
+  void discovery_enqueue_next_();
+  void discovery_on_response_(uint16_t erd);
+  void discovery_on_timeout_();
+  void discovery_advance_();
+  void discovery_save_progress_();
+  void discovery_finish_();
+  void log_discovery_erds_() const;
+#endif
 };
 
 // ---------------------------------------------------------------------------

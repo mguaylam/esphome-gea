@@ -85,6 +85,69 @@ def _write_erd_table_header(table):
     out = Path(__file__).parent / "erd_table.h"
     out.write_text("\n".join(lines) + "\n")
 
+def _load_fork_erds():
+    """Load the empirically-discovered GEA2 ERD list from the fork address file."""
+    erds_file = Path(__file__).parent / "gea2_erds_fork.txt"
+    if not erds_file.exists():
+        return set()
+    result = set()
+    with open(erds_file) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith(("0x", "0X")):
+                try:
+                    result.add(int(line, 16))
+                except ValueError:
+                    pass
+    return result
+
+
+def _write_gea2_discovery_table(ge_table, fork_erds):
+    """Write components/gea/gea2_discovery_table.h with the merged GEA2 ERD scan list."""
+    merged = sorted(set(ge_table.keys()) | fork_erds)
+    bitmap_bytes = (len(merged) + 7) // 8
+    lines = [
+        "// Auto-generated from erd-definitions submodule + gea2_erds_fork.txt",
+        "// Do not edit manually.",
+        "#pragma once",
+        "#include <stdint.h>",
+        "#include <stddef.h>",
+        "",
+        "namespace esphome {",
+        "namespace gea {",
+        "",
+        "struct Gea2DiscoveryEntry {",
+        "  uint16_t id;",
+        "  const char *name;",
+        "};",
+        "",
+        "static const Gea2DiscoveryEntry GEA2_DISCOVERY_TABLE[] = {",
+    ]
+    for erd_id in merged:
+        if erd_id in ge_table:
+            name = ge_table[erd_id][0]
+            lines.append(f'  {{0x{erd_id:04X}, "{name}"}},')
+        else:
+            lines.append(f'  {{0x{erd_id:04X}, nullptr}},')
+    lines += [
+        "};",
+        "",
+        f"static const size_t GEA2_DISCOVERY_TABLE_SIZE = {len(merged)};",
+        f"static const size_t GEA2_DISCOVERY_BITMAP_BYTES = {bitmap_bytes};",
+        "",
+        "struct Gea2DiscoveryPrefs {",
+        "  uint32_t model_hash;",
+        "  uint32_t scan_index;",
+        f"  uint8_t  valid_bitmap[{bitmap_bytes}];",
+        "};",
+        "",
+        "}  // namespace gea",
+        "}  // namespace esphome",
+    ]
+    out = Path(__file__).parent / "gea2_discovery_table.h"
+    out.write_text("\n".join(lines) + "\n")
+
+
 DEPENDENCIES = ["uart"]
 AUTO_LOAD = []
 CODEOWNERS = ["@michaelguaylambert"]
@@ -110,6 +173,7 @@ CONF_MULTIPLIER = "multiplier"
 CONF_OFFSET = "offset"
 CONF_PROTOCOL = "protocol"
 CONF_POLL_INTERVAL = "poll_interval"
+CONF_GEA2_DISCOVERY = "gea2_discovery"
 
 GeaDecodeType = gea_ns.enum("GeaDecodeType")
 GeaProtocol = gea_ns.enum("Protocol", is_class=True)
@@ -183,6 +247,8 @@ def _validate_gea2_requires_dest(config):
             "protocol: gea2 requires dest_address (auto-detect needs spontaneous "
             "traffic that GEA2 doesn't produce). Typical value: 0xC0."
         )
+    if config.get(CONF_GEA2_DISCOVERY) and config[CONF_PROTOCOL] != "gea2":
+        raise cv.Invalid("gea2_discovery is only valid with protocol: gea2")
     return config
 
 
@@ -203,6 +269,10 @@ CONFIG_SCHEMA = cv.All(
             # Set to true to embed the GE public ERD lookup table (~75 KB flash).
             # Enables ERD name, type, and decoded value in dump_config output.
             cv.Optional("erd_lookup", default=False): cv.boolean,
+            # GEA2 only: scan all 2444 known ERDs on first boot, persist responsive
+            # ones to NVS, then poll only those going forward. Subsequent boots skip
+            # the scan and load directly from flash. Takes ~20-30 min on first run.
+            cv.Optional(CONF_GEA2_DISCOVERY, default=False): cv.boolean,
             # Automation: fire on bitmask-edge transitions within an ERD publication.
             # First publication after boot establishes a silent baseline (no trigger).
             cv.Optional(CONF_ON_ERD_CHANGE): automation.validate_automation(
@@ -223,9 +293,13 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    ge_table = _load_erd_table()
     if config["erd_lookup"]:
-        _write_erd_table_header(_load_erd_table())
+        _write_erd_table_header(ge_table)
         cg.add_build_flag("-DGEA_ERD_LOOKUP")
+    if config[CONF_GEA2_DISCOVERY]:
+        _write_gea2_discovery_table(ge_table, _load_fork_erds())
+        cg.add_build_flag("-DGEA_GEA2_DISCOVERY")
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
@@ -239,6 +313,8 @@ async def to_code(config):
 
     cg.add(var.set_src_address(config[CONF_SRC_ADDRESS]))
     cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
+    if config[CONF_GEA2_DISCOVERY]:
+        cg.add(var.set_gea2_discovery(True))
 
     for conf in config.get(CONF_ON_ERD_CHANGE, []):
         trigger = cg.new_Pvariable(
