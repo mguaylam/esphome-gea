@@ -257,8 +257,9 @@ during a collision.
   byte-level CD would flag wiring/power issues immediately.
 
 This is a known and intentional trade-off — see
-[Discussion #TBD](#) for field reports and the conditions under which a
-byte-level CD implementation might be worth the added complexity.
+[Discussion #3](https://github.com/mguaylam/esphome-gea/discussions/3) for
+field reports and the conditions under which a byte-level CD implementation
+might be worth the added complexity.
 
 ## Request reliability
 
