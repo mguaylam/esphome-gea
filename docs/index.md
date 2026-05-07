@@ -51,4 +51,6 @@ known-good options:
   protocol on ESPHome was done by [@mulcmu](https://github.com/mulcmu); this
   project builds on that foundation.
 - **[FirstBuild GEA adapter](https://firstbuild.com/)** — commercial 8P8C
-  breakout with status LEDs, ready to use out of the box.
+  breakout with status LEDs, ready to use out of the box. Schematic and
+  reference firmware are open-sourced at
+  [geappliances/home-assistant-adapter](https://github.com/geappliances/home-assistant-adapter).

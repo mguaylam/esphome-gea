@@ -190,6 +190,76 @@ There is no subscription state machine on GEA2. Instead, the hub:
 Bus health is still derived from `last_rx_ms_`, so `is_bus_connected()` works
 identically on both protocols.
 
+## Bus topology & hardware
+
+GEA2 and GEA3 share the same logical framing but use very different
+electrical layers — and on a multi-node bus, that has consequences.
+
+### GEA3 — full-duplex, point-to-point
+
+GEA3 separates TX and RX physically. Two simple tri-state buffers on the
+carrier board (one per direction) bridge the appliance bus to the MCU UART.
+There's no echo, no collision risk, no shared medium. From the firmware's
+point of view it's just a fast UART link.
+
+### GEA2 — half-duplex, multi-node, wired-OR
+
+GEA2 is a **shared open-drain bus** that several appliance modules
+(main board, control panel, ice maker, dispenser, …) drive simultaneously
+in a wired-OR fashion. On a typical FirstBuild / GE Home Assistant Adapter
+board:
+
+- A high-side PNP transistor drives the bus dominant when the MCU TX is
+  asserted; release lets the bus float to the recessive state.
+- A NAND-gate inverter on the receive path feeds the **bus** signal (not
+  the MCU TX line) back into the MCU RX. As a side-effect, **everything
+  the MCU transmits is echoed back on RX** — this is intentional and is
+  what enables byte-level collision detection in GE's reference firmware.
+- No UART inversion is required: idle bus → MCU RX HIGH → standard 8N1.
+
+Schematic of the official board:
+[geappliances/home-assistant-adapter/doc/schematic-v1.0.pdf](https://github.com/geappliances/home-assistant-adapter/blob/main/doc/schematic-v1.0.pdf).
+
+## Collision handling (GEA2)
+
+Because GEA2 is a multi-node bus, two nodes can start transmitting at the
+same time and corrupt each other's frames. GE's reference firmware
+(`tiny-gea-api`) uses **byte-level echo verification**: each transmitted
+byte is compared against what comes back on RX, and a mismatch triggers an
+immediate abort + pseudo-random backoff (≈43–106 ms, derived from the
+node's address).
+
+**What this component does today:**
+
+- The bus self-echo is filtered out by checking the `dest` field against
+  our own `src_address` — packets we sent ourselves are discarded before
+  parsing.
+- We do **not** verify the echo byte-by-byte and we do **not** implement
+  the backoff FSM.
+- If a collision corrupts our request, we recover via the standard
+  request-reliability path (250 ms timeout × 10 retries — see below).
+
+**Why it works in practice:**
+
+The other nodes on the bus run `tiny-gea-api` (or equivalent) and **do**
+detect collisions on their side, so they back off and retransmit within
+~50 ms. We notice the missing response 250 ms later and retry. Both sides
+eventually converge — at the cost of slightly higher latency on our end
+during a collision.
+
+**What we lose by not implementing byte-level CD:**
+
+- Slower recovery after a collision (250 ms timeout vs ~50 ms backoff).
+- We can briefly corrupt another node's in-flight frame before its CD
+  catches it, forcing it to retransmit. No data loss, just bus noise.
+- Less informative diagnostics on hardware faults: a missing echo today
+  looks the same as a missing response (timeout + retry), whereas
+  byte-level CD would flag wiring/power issues immediately.
+
+This is a known and intentional trade-off — see
+[Discussion #TBD](#) for field reports and the conditions under which a
+byte-level CD implementation might be worth the added complexity.
+
 ## Request reliability
 
 Every outgoing request (read, write, subscribe-all) goes through a
@@ -222,6 +292,25 @@ Writes initiated from Home Assistant are **non-blocking**: the entity returns
 immediately and the queue transmits in the background. A dropped write
 (10 retries exhausted) is logged at `WARN` level and increments
 `get_dropped_requests()` — see [Diagnostics](diagnostics.md).
+
+## References
+
+This component's protocol implementation was informed by GE Appliances'
+publicly released reference projects (all BSD-3-Clause). No code is copied
+— our C++ implementation is independent — but their work documents the
+wire-level behaviour, timing constants, and design intent of the bus.
+
+- **[geappliances/tiny-gea-api](https://github.com/geappliances/tiny-gea-api)**
+  — minimal C library implementing both GEA2 and GEA3 framing, CRC, and
+  the GEA2 byte-level collision-detection FSM. The canonical source of
+  truth for "what should a node on this bus actually do".
+- **[geappliances/home-assistant-adapter](https://github.com/geappliances/home-assistant-adapter)**
+  — the official GE-published carrier board (schematic, firmware, BOM).
+  Useful for understanding the GEA2 electrical layer (echo path, PNP
+  driver, no UART inversion required).
+- **[geappliances/arduino-gea2](https://github.com/geappliances/arduino-gea2)**
+  — Arduino wrapper around `tiny-gea-api` for GEA2; doubles as a working
+  example of the polling and timing constants in a real sketch.
 
 ## See also
 
