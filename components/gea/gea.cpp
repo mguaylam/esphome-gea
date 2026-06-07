@@ -293,15 +293,23 @@ void GEAComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up GEA component (protocol=%s)...", protocol_ == Protocol::GEA2 ? "GEA2" : "GEA3");
   rx_buf_.reserve(64);
   if (protocol_ == Protocol::GEA2) {
-    // GEA2 has no subscribe-all and no spontaneous publications. The Python
-    // schema enforces dest_address is set, so auto_detect_ is irrelevant here.
+    // GEA2 has no subscribe-all and no spontaneous publications, so the GEA3
+    // passive auto-detect can't apply here.
     auto_detect_ = false;
-    ESP_LOGI(TAG, "GEA2 mode — values will be polled (interval=%u ms)", poll_interval_ms_);
-    last_poll_ms_ = millis();
+    if (!dest_configured_) {
+      // No dest_address in YAML — actively probe the bus to find the appliance
+      // address before any polling. See drive_gea2_addr_discovery_().
+      gea2_addr_discovery_ = true;
+      dest_addr_ = GEA_BROADCAST_ADDR;
+      ESP_LOGI(TAG, "GEA2 mode — dest_address not set; probing the bus to discover the appliance address");
+    } else {
+      ESP_LOGI(TAG, "GEA2 mode — values will be polled (interval=%u ms)", poll_interval_ms_);
+      last_poll_ms_ = millis();
 #ifdef GEA_GEA2_DISCOVERY
-    if (gea2_discovery_)
-      discovery_init_();
+      if (gea2_discovery_)
+        discovery_init_();
 #endif
+    }
   } else {
     if (auto_detect_) {
       ESP_LOGI(TAG, "Address auto-detect enabled — sending subscribe-all to broadcast");
@@ -315,7 +323,10 @@ void GEAComponent::setup() {
 void GEAComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "GEA Component:");
   ESP_LOGCONFIG(TAG, "  Protocol: %s", protocol_ == Protocol::GEA2 ? "GEA2" : "GEA3");
-  if (auto_detect_) {
+  if (gea2_addr_discovery_) {
+    ESP_LOGCONFIG(TAG, "  Dest address: discovering on the bus%s",
+                  addr_discovery_halted_ ? " (halted — set dest_address)" : "…");
+  } else if (auto_detect_) {
     ESP_LOGCONFIG(TAG, "  Dest address: auto-detect (current: 0x%02X)", dest_addr_);
   } else {
     ESP_LOGCONFIG(TAG, "  Dest address: 0x%02X", dest_addr_);
@@ -511,6 +522,11 @@ void GEAComponent::loop() {
   }
 
   if (protocol_ == Protocol::GEA2) {
+    if (gea2_addr_discovery_) {
+      // Resolve the appliance address first; skip polling until it's known.
+      drive_gea2_addr_discovery_();
+      return;
+    }
 #ifdef GEA_GEA2_DISCOVERY
     if (gea2_discovery_ && discovery_state_ == DiscoveryState::SCANNING) {
       // During discovery: enqueue one read at a time with no inter-read delay.
@@ -698,6 +714,91 @@ void GEAComponent::poll_next_() {
 }
 
 // =============================================================================
+// GEAComponent — GEA2 active address discovery
+// =============================================================================
+
+// Broadcast a GEA2 read of a universal identity ERD. Whichever node answers
+// reveals its address in the SRC field of its response (captured in
+// process_packet_ via record_addr_candidate_).
+void GEAComponent::send_gea2_addr_probe_() {
+  std::vector<uint8_t> payload = {CMD_GEA2_READ, 0x01, (uint8_t)(GEA2_ADDR_PROBE_ERD >> 8),
+                                  (uint8_t)(GEA2_ADDR_PROBE_ERD & 0xFF)};
+  send_packet_(GEA_BROADCAST_ADDR, payload);
+  ESP_LOGD(TAG, "GEA2 address probe: broadcast read of ERD 0x%04X", GEA2_ADDR_PROBE_ERD);
+}
+
+// Record a distinct responder address seen during the current probe window.
+void GEAComponent::record_addr_candidate_(uint8_t src) {
+  for (uint8_t a : addr_candidates_) {
+    if (a == src)
+      return;
+  }
+  addr_candidates_.push_back(src);
+  ESP_LOGD(TAG, "GEA2 address probe: response from 0x%02X", src);
+}
+
+// Drive the probe/collect/evaluate cycle. Called from loop() while
+// gea2_addr_discovery_ is set; returns the component to normal operation once a
+// single appliance is found, or halts on an ambiguous (multi-responder) bus.
+void GEAComponent::drive_gea2_addr_discovery_() {
+  if (addr_discovery_halted_)
+    return;  // ambiguous result — idle until the user sets dest_address and reflashes
+
+  uint32_t now = millis();
+
+  if (!addr_probe_inflight_) {
+    // Wait out the cooldown between rounds, then start a fresh probe.
+    if (now - addr_probe_at_ms_ < GEA2_ADDR_PROBE_COOLDOWN_MS)
+      return;
+    addr_candidates_.clear();
+    send_gea2_addr_probe_();
+    addr_probe_inflight_ = true;
+    addr_probe_at_ms_ = now;
+    return;
+  }
+
+  // Probe is out — keep collecting responders until the window closes.
+  if (now - addr_probe_at_ms_ < GEA2_ADDR_PROBE_WINDOW_MS)
+    return;
+
+  addr_probe_inflight_ = false;
+  addr_probe_at_ms_ = now;  // start the cooldown before the next round
+  addr_probe_attempts_++;
+
+  if (addr_candidates_.size() == 1) {
+    dest_addr_ = addr_candidates_[0];
+    gea2_addr_discovery_ = false;
+    ESP_LOGI(TAG, "GEA2 address discovery: appliance found at 0x%02X (after %u probe(s))", dest_addr_,
+             (unsigned)addr_probe_attempts_);
+    ESP_LOGI(TAG, "  Pin it with 'dest_address: 0x%02X' in YAML to skip discovery on future boots.", dest_addr_);
+    last_poll_ms_ = millis();
+#ifdef GEA_GEA2_DISCOVERY
+    if (gea2_discovery_)
+      discovery_init_();
+#endif
+  } else if (addr_candidates_.empty()) {
+    bool loud = addr_probe_attempts_ <= GEA2_ADDR_PROBE_LOUD_ATTEMPTS || (addr_probe_attempts_ % 30 == 0);
+    if (loud)
+      ESP_LOGW(TAG,
+               "GEA2 address discovery: no appliance answered the broadcast probe (attempt %u). Retrying… "
+               "If this persists, check power/wiring or set 'dest_address' manually.",
+               (unsigned)addr_probe_attempts_);
+  } else {
+    std::string list;
+    char buf[8];
+    for (uint8_t a : addr_candidates_) {
+      snprintf(buf, sizeof(buf), "0x%02X ", a);
+      list += buf;
+    }
+    ESP_LOGE(TAG,
+             "GEA2 address discovery: %zu nodes answered (%s)— ambiguous on a multi-node bus. "
+             "Set 'dest_address' to the one you want and reflash.",
+             addr_candidates_.size(), list.c_str());
+    addr_discovery_halted_ = true;
+  }
+}
+
+// =============================================================================
 // GEAComponent — RX state machine
 // =============================================================================
 
@@ -757,6 +858,14 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
 
   ESP_LOGV(TAG, "RX frame: dest=0x%02X src=0x%02X len=%zu", dest, src, pkt.size());
 
+  // Drop our own transmissions echoed back on the half-duplex GEA2 bus. A frame
+  // whose SRC is our own address is never a genuine inbound message; without this
+  // guard, broadcast probes (dest=0xFF) would re-enter as phantom packets.
+  if (src == src_addr_) {
+    ESP_LOGV(TAG, "Ignoring self-echo (src=0x%02X)", src);
+    return;
+  }
+
   // Filter packets not addressed to us (or broadcast).
   if (dest != src_addr_ && dest != GEA_BROADCAST_ADDR) {
     ESP_LOGD(TAG, "Ignoring packet for 0x%02X (we are 0x%02X)", dest, src_addr_);
@@ -781,6 +890,12 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
   // Packet is valid — acknowledge it and record receive time (used by is_bus_connected()).
   send_ack_();
   last_rx_ms_ = millis();
+
+  // GEA2 active address discovery: any valid frame from a real node (the
+  // self-echo and broadcast cases are already excluded above) is a candidate
+  // appliance address. drive_gea2_addr_discovery_() evaluates the collected set.
+  if (gea2_addr_discovery_)
+    record_addr_candidate_(src);
 
   // Auto-detect: lock onto the source address of the first valid packet.
   if (auto_detect_ && src != GEA_BROADCAST_ADDR && src != src_addr_) {

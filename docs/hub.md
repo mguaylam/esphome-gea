@@ -40,7 +40,7 @@ gea:
   id: gea_hub
   uart_id: uart_gea
   protocol: gea2
-  dest_address: 0xC0     # required — auto-detect not possible on GEA2
+  dest_address: 0xC0     # optional — omit to let the hub discover it at boot
   poll_interval: 2s      # how often to refresh each declared ERD
 ```
 
@@ -56,10 +56,16 @@ gea:
   differences.
 - **src_address** (*Optional*, hex byte): The address this device claims on the
   GEA bus. Defaults to `0xBB`.
-- **dest_address** (*Optional* on GEA3 / *Required* on GEA2, hex byte):
-  The address of the appliance. On GEA3 the hub can auto-detect it from the
-  first valid packet; GEA2 has no spontaneous traffic so this must be set
-  explicitly. Typical value: `0xC0`.
+- **dest_address** (*Optional*, hex byte): The address of the appliance.
+  - On **GEA3** the hub auto-detects it from the first valid packet.
+  - On **GEA2** there is no spontaneous traffic, so if you omit `dest_address`
+    the hub *actively discovers* it at boot: it broadcasts a read of a universal
+    identity ERD (`0x0001`, model number) and adopts the address of whichever
+    node replies, logging it at `INFO`. If **exactly one** appliance answers it
+    is adopted automatically; if **several** answer (a multi-node bus) the hub
+    halts and asks you to pick one. Pinning `dest_address: 0xC0` explicitly skips
+    this probe on every boot — recommended once you know the value. Typical
+    value: `0xC0`.
 - **poll_interval** (*Optional*, time — GEA2 only): How long the round-robin
   poller waits between successive ERD reads. Defaults to `2s`. Smaller values
   refresh state faster but increase bus load. Ignored on GEA3.
