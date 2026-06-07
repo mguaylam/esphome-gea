@@ -7,18 +7,15 @@ on:
     branches: [main]
 
 jobs:
-  clang-format:
-    name: clang-format
+  pre-commit:
+    name: pre-commit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install clang-format
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-format
-
-      - name: Check formatting
-        run: |
-          mapfile -t files < <(find components/gea -type f \( -name '*.h' -o -name '*.cpp' \))
-          clang-format --dry-run --Werror "${files[@]}"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Runs every hook in .pre-commit-config.yaml against all files. The
+      # clang-format version is pinned there, so this check is reproducible and
+      # matches what `pre-commit` runs locally — no apt version drift.
+      - uses: pre-commit/action@v3.0.1

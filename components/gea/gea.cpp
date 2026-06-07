@@ -331,8 +331,8 @@ void GEAComponent::dump_config() {
 #ifdef GEA_GEA2_DISCOVERY
   if (gea2_discovery_) {
     if (discovery_state_ == DiscoveryState::SCANNING) {
-      ESP_LOGCONFIG(TAG, "  GEA2 discovery: SCANNING (%zu / %zu, %zu found)",
-                    discovery_index_, GEA2_DISCOVERY_TABLE_SIZE, discovery_found_erds_.size());
+      ESP_LOGCONFIG(TAG, "  GEA2 discovery: SCANNING (%zu / %zu, %zu found)", discovery_index_,
+                    GEA2_DISCOVERY_TABLE_SIZE, discovery_found_erds_.size());
     } else {
       ESP_LOGCONFIG(TAG, "  GEA2 discovery: DONE — %zu ERDs responded", discovery_found_erds_.size());
       log_discovery_erds_();
@@ -452,8 +452,8 @@ void GEAComponent::log_erds() const {
 #ifdef GEA_GEA2_DISCOVERY
   if (gea2_discovery_) {
     if (discovery_state_ == DiscoveryState::SCANNING) {
-      ESP_LOGI(TAG, "GEA2 discovery in progress: %zu / %zu scanned, %zu found so far",
-               discovery_index_, GEA2_DISCOVERY_TABLE_SIZE, discovery_found_erds_.size());
+      ESP_LOGI(TAG, "GEA2 discovery in progress: %zu / %zu scanned, %zu found so far", discovery_index_,
+               GEA2_DISCOVERY_TABLE_SIZE, discovery_found_erds_.size());
     } else {
       ESP_LOGI(TAG, "GEA2 discovered ERDs (%zu) — add these to your YAML:", discovery_found_erds_.size());
       log_discovery_erds_();
@@ -519,12 +519,12 @@ void GEAComponent::loop() {
         discovery_enqueue_next_();
     } else {
 #endif
-    // Normal round-robin polling of declared entities.
-    uint32_t now_poll = millis();
-    if (now_poll - last_poll_ms_ >= poll_interval_ms_) {
-      poll_next_();
-      last_poll_ms_ = now_poll;
-    }
+      // Normal round-robin polling of declared entities.
+      uint32_t now_poll = millis();
+      if (now_poll - last_poll_ms_ >= poll_interval_ms_) {
+        poll_next_();
+        last_poll_ms_ = now_poll;
+      }
 #ifdef GEA_GEA2_DISCOVERY
     }
 #endif
@@ -1085,11 +1085,10 @@ void GEAComponent::discovery_init_() {
         if (discovery_bitmap_[i / 8] & (1u << (i % 8)))
           discovery_found_erds_.push_back(GEA2_DISCOVERY_TABLE[i].id);
       }
-      ESP_LOGI(TAG, "GEA2 discovery: resuming at %zu / %zu (%zu found so far)",
-               discovery_index_, GEA2_DISCOVERY_TABLE_SIZE, discovery_found_erds_.size());
+      ESP_LOGI(TAG, "GEA2 discovery: resuming at %zu / %zu (%zu found so far)", discovery_index_,
+               GEA2_DISCOVERY_TABLE_SIZE, discovery_found_erds_.size());
     } else {
-      ESP_LOGI(TAG, "GEA2 discovery: starting full scan (%zu ERDs) — this takes ~20-30 min",
-               GEA2_DISCOVERY_TABLE_SIZE);
+      ESP_LOGI(TAG, "GEA2 discovery: starting full scan (%zu ERDs) — this takes ~20-30 min", GEA2_DISCOVERY_TABLE_SIZE);
     }
   }
 }
@@ -1116,14 +1115,13 @@ void GEAComponent::discovery_enqueue_next_() {
 void GEAComponent::discovery_on_response_(uint16_t erd) {
   discovery_found_erds_.push_back(erd);
   discovery_bitmap_[discovery_index_ / 8] |= (1u << (discovery_index_ % 8));
-  ESP_LOGD(TAG, "Discovery: ERD 0x%04X responded (%zu / %zu)", erd, discovery_index_ + 1,
-           GEA2_DISCOVERY_TABLE_SIZE);
+  ESP_LOGD(TAG, "Discovery: ERD 0x%04X responded (%zu / %zu)", erd, discovery_index_ + 1, GEA2_DISCOVERY_TABLE_SIZE);
   discovery_advance_();
 }
 
 void GEAComponent::discovery_on_timeout_() {
-  ESP_LOGV(TAG, "Discovery: ERD 0x%04X no response (%zu / %zu)",
-           GEA2_DISCOVERY_TABLE[discovery_index_].id, discovery_index_ + 1, GEA2_DISCOVERY_TABLE_SIZE);
+  ESP_LOGV(TAG, "Discovery: ERD 0x%04X no response (%zu / %zu)", GEA2_DISCOVERY_TABLE[discovery_index_].id,
+           discovery_index_ + 1, GEA2_DISCOVERY_TABLE_SIZE);
   discovery_advance_();
 }
 
@@ -1131,8 +1129,8 @@ void GEAComponent::discovery_advance_() {
   discovery_index_++;
   if (discovery_index_ % 50 == 0) {
     uint32_t pct = (uint32_t)(discovery_index_ * 100 / GEA2_DISCOVERY_TABLE_SIZE);
-    ESP_LOGI(TAG, "Discovery progress: %zu / %zu (%u%%) — %zu ERDs found so far",
-             discovery_index_, GEA2_DISCOVERY_TABLE_SIZE, pct, discovery_found_erds_.size());
+    ESP_LOGI(TAG, "Discovery progress: %zu / %zu (%u%%) — %zu ERDs found so far", discovery_index_,
+             GEA2_DISCOVERY_TABLE_SIZE, pct, discovery_found_erds_.size());
   }
   if (discovery_index_ % 100 == 0)
     discovery_save_progress_();
@@ -1145,8 +1143,8 @@ void GEAComponent::discovery_save_progress_() {
   prefs.scan_index = (uint32_t)discovery_index_;
   memcpy(prefs.valid_bitmap, discovery_bitmap_.data(), GEA2_DISCOVERY_BITMAP_BYTES);
   discovery_pref_.save(&prefs);
-  ESP_LOGD(TAG, "Discovery: saved progress — %zu / %zu scanned, %zu found",
-           discovery_index_, GEA2_DISCOVERY_TABLE_SIZE, poll_erds_.size());
+  ESP_LOGD(TAG, "Discovery: saved progress — %zu / %zu scanned, %zu found", discovery_index_, GEA2_DISCOVERY_TABLE_SIZE,
+           poll_erds_.size());
 }
 
 void GEAComponent::log_discovery_erds_() const {
@@ -1170,8 +1168,8 @@ void GEAComponent::log_discovery_erds_() const {
 void GEAComponent::discovery_finish_() {
   discovery_save_progress_();
   discovery_state_ = DiscoveryState::DONE;
-  ESP_LOGI(TAG, "GEA2 discovery complete — %zu ERDs responded out of %zu scanned",
-           discovery_found_erds_.size(), GEA2_DISCOVERY_TABLE_SIZE);
+  ESP_LOGI(TAG, "GEA2 discovery complete — %zu ERDs responded out of %zu scanned", discovery_found_erds_.size(),
+           GEA2_DISCOVERY_TABLE_SIZE);
   ESP_LOGI(TAG, "Copy the ERDs below into your YAML to build your configuration:");
   log_discovery_erds_();
 }

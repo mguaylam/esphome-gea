@@ -1,0 +1,10 @@
+# Pinned formatting hooks. The SAME pinned version runs locally (after
+# `pre-commit install`) and in CI (.github/workflows/lint.yml), so there is no
+# drift between a contributor's machine and the lint check. Bump `rev`
+# deliberately when you want a new clang-format, then run `pre-commit run -a`.
+repos:
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v18.1.8
+    hooks:
+      - id: clang-format
+        files: ^components/gea/.*\.(cpp|h)$
