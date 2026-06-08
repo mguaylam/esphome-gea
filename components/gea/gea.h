@@ -170,6 +170,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // dest_address is optional: if not called, auto-detect is used instead.
   void set_dest_address(uint8_t addr) {
     dest_addr_ = addr;
+    dest_configured_ = true;
     auto_detect_ = false;
   }
   void set_src_address(uint8_t addr) { src_addr_ = addr; }
@@ -190,7 +191,29 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // Returns true if a valid packet has been received within the last 30 s.
   bool is_bus_connected() const { return last_rx_ms_ != 0 && (millis() - last_rx_ms_) < 30000; }
 
+  // The appliance (destination) address the hub talks to. On GEA2 with no
+  // dest_address this is filled in by address discovery; while still probing it
+  // reads as the broadcast address (0xFF). Surface it as a template text_sensor
+  // to keep it visible after boot (the discovery log only prints once):
+  //   text_sensor:
+  //     - platform: template
+  //       name: "GEA appliance address"
+  //       entity_category: diagnostic
+  //       lambda: |-
+  //         char buf[7];
+  //         snprintf(buf, sizeof(buf), "0x%02X", id(gea_hub).get_dest_address());
+  //         return std::string(buf);
+  uint8_t get_dest_address() const { return dest_addr_; }
+  // False while GEA2 address discovery is still probing or has halted on an
+  // ambiguous bus; true once an address is known (discovered or configured).
+  bool is_address_resolved() const { return !gea2_addr_discovery_; }
+
   // ---- Diagnostics — callable from YAML lambdas ---------------------------
+  // Logs the appliance address and how it was determined, at INFO level. The
+  // address is printed once at boot; call this on api: on_client_connected to
+  // see it again after connecting over the network.
+  void log_address() const;
+
   // Logs all discovered ERDs at INFO level. Useful to call on api: on_client_connected
   // so the list appears each time you open the console.
   void log_erds() const;
@@ -306,6 +329,26 @@ class GEAComponent : public uart::UARTDevice, public Component {
   bool poll_list_built_{false};
   void build_poll_list_();
   void poll_next_();
+
+  // GEA2 active address discovery — engaged when dest_address is omitted in YAML.
+  // We broadcast a read of a universal identity ERD; the appliance reveals its
+  // address in the SRC field of its response. On a multi-node bus more than one
+  // node may answer, so we collect distinct responders over a short window and
+  // only auto-adopt when exactly one replies (otherwise halt and ask the user).
+  static constexpr uint16_t GEA2_ADDR_PROBE_ERD = 0x0001;        // model number — present on every appliance
+  static constexpr uint32_t GEA2_ADDR_PROBE_WINDOW_MS = 500;     // collect responders this long after each probe
+  static constexpr uint32_t GEA2_ADDR_PROBE_COOLDOWN_MS = 1000;  // idle gap between probe rounds
+  static constexpr uint8_t GEA2_ADDR_PROBE_LOUD_ATTEMPTS = 5;    // throttle the "no response" warning after this many
+  bool dest_configured_{false};                                  // set_dest_address() was called from YAML
+  bool gea2_addr_discovery_{false};                              // actively probing the bus for the appliance address
+  bool addr_discovery_halted_{false};  // multiple responders — waiting for a manual dest_address
+  bool addr_probe_inflight_{false};    // a probe is out; collecting responders this round
+  uint32_t addr_probe_at_ms_{0};       // start of the current probe window / cooldown
+  uint32_t addr_probe_attempts_{0};
+  std::vector<uint8_t> addr_candidates_;  // distinct responder SRC addresses seen this round
+  void drive_gea2_addr_discovery_();
+  void send_gea2_addr_probe_();
+  void record_addr_candidate_(uint8_t src);
 
   // GEA2 ERD discovery (opt-in via gea2_discovery: true in YAML).
   // On first boot: scans GEA2_DISCOVERY_TABLE, saves responsive ERDs to NVS.

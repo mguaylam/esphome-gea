@@ -50,6 +50,48 @@ binary_sensor:
 | `get_tx_retries()` | `uint32_t` | a pending request times out and is resent |
 | `get_dropped_requests()` | `uint32_t` | a pending request exhausts all retries |
 | `is_bus_connected()` | `bool` | `true` when a valid packet has been received in the last 30 s |
+| `get_dest_address()` | `uint8_t` | the appliance address in use (resolved by GEA2 address discovery, or as configured) |
+| `is_address_resolved()` | `bool` | `false` while GEA2 address discovery is still probing or halted; `true` once an address is known |
+
+On GEA2 with no `dest_address`, the discovered address is logged once at boot —
+which can scroll past before a network client connects. To print it again on
+demand, wire `log_address()` to `api: on_client_connected`:
+
+```yaml
+api:
+  on_client_connected:
+    - lambda: 'id(gea_hub).log_address();'
+```
+
+`on_client_connected` fires at authentication, just before the client sends its
+log-subscribe request, and the logger does not replay past lines — so a one-shot
+line emitted exactly on connect can occasionally be missed by the client that
+just connected. If you don't see it, add a short delay so the subscription is in
+place first:
+
+```yaml
+api:
+  on_client_connected:
+    - delay: 1s
+    - lambda: 'id(gea_hub).log_address();'
+```
+
+The address is always written to the boot/serial log regardless; this is only
+the convenience path for reading it over the network after boot.
+
+If you'd rather have it always visible in Home Assistant, `get_dest_address()`
+exposes it for a persistent diagnostic `text_sensor`:
+
+```yaml
+text_sensor:
+  - platform: template
+    name: "GEA appliance address"
+    entity_category: diagnostic
+    lambda: |-
+      char buf[7];
+      snprintf(buf, sizeof(buf), "0x%02X", id(gea_hub).get_dest_address());
+      return std::string(buf);
+```
 
 ## Interpreting the counters
 
