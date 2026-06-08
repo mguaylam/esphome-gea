@@ -320,8 +320,19 @@ class GEAComponent : public uart::UARTDevice, public Component {
   std::vector<uint16_t> discovery_found_erds_;  // ERDs that responded — info only
   ESPPreferenceObject discovery_pref_;
 
+  // Bus-liveness gate: the scan only advances while the bus is responsive, so a
+  // dead/unpowered bus at boot (or an appliance powered off mid-scan) never
+  // burns through all ERDs and persists a useless empty result. While the bus
+  // is quiet we periodically read a universal ERD (model number) until it
+  // answers — GEA2 has no spontaneous traffic, so is_bus_connected() can only
+  // turn true once one of our reads gets a response.
+  static constexpr uint16_t GEA2_LIVENESS_ERD = 0x0001;
+  static constexpr uint32_t DISCOVERY_PROBE_INTERVAL_MS = 2000;
+  uint32_t discovery_probe_ms_{0};
+
   void discovery_init_();
   void discovery_enqueue_next_();
+  void discovery_probe_bus_();
   void discovery_on_response_(uint16_t erd);
   void discovery_on_timeout_();
   void discovery_advance_();
