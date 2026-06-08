@@ -191,7 +191,29 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // Returns true if a valid packet has been received within the last 30 s.
   bool is_bus_connected() const { return last_rx_ms_ != 0 && (millis() - last_rx_ms_) < 30000; }
 
+  // The appliance (destination) address the hub talks to. On GEA2 with no
+  // dest_address this is filled in by address discovery; while still probing it
+  // reads as the broadcast address (0xFF). Surface it as a template text_sensor
+  // to keep it visible after boot (the discovery log only prints once):
+  //   text_sensor:
+  //     - platform: template
+  //       name: "GEA appliance address"
+  //       entity_category: diagnostic
+  //       lambda: |-
+  //         char buf[7];
+  //         snprintf(buf, sizeof(buf), "0x%02X", id(gea_hub).get_dest_address());
+  //         return std::string(buf);
+  uint8_t get_dest_address() const { return dest_addr_; }
+  // False while GEA2 address discovery is still probing or has halted on an
+  // ambiguous bus; true once an address is known (discovered or configured).
+  bool is_address_resolved() const { return !gea2_addr_discovery_; }
+
   // ---- Diagnostics — callable from YAML lambdas ---------------------------
+  // Logs the appliance address and how it was determined, at INFO level. The
+  // address is printed once at boot; call this on api: on_client_connected to
+  // see it again after connecting over the network.
+  void log_address() const;
+
   // Logs all discovered ERDs at INFO level. Useful to call on api: on_client_connected
   // so the list appears each time you open the console.
   void log_erds() const;

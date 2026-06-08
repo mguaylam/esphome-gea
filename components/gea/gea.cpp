@@ -459,6 +459,23 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
 }
 #endif  // GEA_ERD_LOOKUP
 
+// Log the appliance address and how it was determined. The address is also
+// printed once at boot, but that scrolls away before a network client connects —
+// wire this to api: on_client_connected to see it on demand.
+void GEAComponent::log_address() const {
+  if (gea2_addr_discovery_) {
+    ESP_LOGI(TAG, "Appliance address: unresolved — %s",
+             addr_discovery_halted_ ? "discovery halted, set dest_address manually" : "discovering on the bus");
+  } else if (dest_configured_) {
+    ESP_LOGI(TAG, "Appliance address: 0x%02X (configured)", dest_addr_);
+  } else if (auto_detect_) {
+    ESP_LOGI(TAG, "Appliance address: auto-detecting (no packet received yet)");
+  } else {
+    ESP_LOGI(TAG, "Appliance address: 0x%02X (%s)", dest_addr_,
+             protocol_ == Protocol::GEA2 ? "auto-discovered" : "auto-detected");
+  }
+}
+
 void GEAComponent::log_erds() const {
 #ifdef GEA_GEA2_DISCOVERY
   if (gea2_discovery_) {
