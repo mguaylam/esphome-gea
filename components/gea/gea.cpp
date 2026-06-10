@@ -7,6 +7,7 @@
 #endif
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 
 namespace esphome {
 namespace gea {
@@ -172,9 +173,23 @@ void GEAComponent::send_packet_(uint8_t dest, const std::vector<uint8_t> &payloa
 
   auto escaped = escape_(inner);
 
-  write_byte(GEA_STX);
-  write_array(escaped.data(), escaped.size());
-  write_byte(GEA_ETX);
+  // Assemble the exact wire image (STX + escaped body + ETX) in one buffer so
+  // GEA2 can verify the bus echo against it byte-for-byte.
+  std::vector<uint8_t> frame;
+  frame.reserve(escaped.size() + 2);
+  frame.push_back(GEA_STX);
+  frame.insert(frame.end(), escaped.begin(), escaped.end());
+  frame.push_back(GEA_ETX);
+  write_array(frame.data(), frame.size());
+
+  if (protocol_ == Protocol::GEA2) {
+    // Single-wire bus: everything we send comes back on RX.  Keep the wire
+    // image so loop() can match the echo as it arrives — a mismatch means
+    // another node drove the line at the same time (collision).
+    gea2_echo_buf_ = std::move(frame);
+    gea2_echo_idx_ = 0;
+    gea2_echo_at_ms_ = millis();
+  }
 }
 
 uint8_t GEAComponent::next_req_id_() {
@@ -256,6 +271,52 @@ void GEAComponent::finish_pending_() {
   pending_active_ = false;
   pending_.body.clear();
   pending_.is_discovery = false;
+}
+
+// True when a GEA2 transmission may start: no frame is mid-reception, the
+// echo of our previous transmission has fully returned, and the line has been
+// silent for a few byte-times.  Immediate protocol responses (ACK) are exempt
+// — the peer expects them right after its frame.  GEA3 runs on a dedicated
+// full-duplex link, so there is no one to yield to.
+bool GEAComponent::gea2_bus_clear_() const {
+  if (protocol_ != Protocol::GEA2)
+    return true;
+  if (rx_state_ != RxState::IDLE || !gea2_echo_buf_.empty())
+    return false;
+  return last_rx_byte_ms_ == 0 || millis() - last_rx_byte_ms_ >= GEA2_TX_IDLE_MS;
+}
+
+// Match an incoming byte against the wire image of our last GEA2 transmission.
+// Returns true when the byte was our own echo (consumed, not fed to the
+// parser).  A mismatch means another node transmitted while we did — a
+// collision.  Both frames are garbled on the wire, so schedule a fast retry of
+// the pending request after a short random backoff (the randomness breaks
+// lockstep with the other node's own retry) instead of waiting out the full
+// request timeout.
+bool GEAComponent::consume_gea2_echo_byte_(uint8_t byte) {
+  if (gea2_echo_buf_.empty())
+    return false;
+  if (byte == gea2_echo_buf_[gea2_echo_idx_]) {
+    gea2_echo_idx_++;
+    if (gea2_echo_idx_ >= gea2_echo_buf_.size()) {
+      ESP_LOGV(TAG, "GEA2 TX echo verified (%zu bytes)", gea2_echo_buf_.size());
+      gea2_echo_buf_.clear();
+      gea2_echo_idx_ = 0;
+    }
+    return true;
+  }
+  tx_collisions_++;
+  ESP_LOGD(TAG, "GEA2 collision: echo byte %zu read 0x%02X, sent 0x%02X — scheduling fast retry", gea2_echo_idx_, byte,
+           gea2_echo_buf_[gea2_echo_idx_]);
+  gea2_echo_buf_.clear();
+  gea2_echo_idx_ = 0;
+  if (pending_active_) {
+    // Backdate the send timestamp so the regular timeout machinery fires
+    // after the backoff rather than after the full REQUEST_TIMEOUT_MS.
+    uint32_t backoff = GEA2_COLLISION_BACKOFF_MIN_MS + (random_uint32() % GEA2_COLLISION_BACKOFF_SPAN_MS);
+    pending_.sent_at_ms = millis() - REQUEST_TIMEOUT_MS + backoff;
+  }
+  return false;  // garbled byte — let the parser see it and resync on STX
 }
 
 // Returns true if an incoming response's command and request ID match the
@@ -521,21 +582,42 @@ void GEAComponent::log_erds() const {
 }
 
 void GEAComponent::loop() {
-  // Drain all available RX bytes through the state machine.
+  // Drain all available RX bytes.  On GEA2 the echo of our own transmission
+  // is verified and consumed first; everything else goes through the frame
+  // parser.  Every byte — echo or not — marks the line as busy for the
+  // bus-idle TX gate.
   uint8_t byte;
   while (available()) {
     if (!read_byte(&byte))
       break;
     rx_byte_count_++;
+    last_rx_byte_ms_ = millis();
+    if (consume_gea2_echo_byte_(byte))
+      continue;
     process_rx_byte_(byte);
+  }
+
+  // An echo that never completes (neither matched nor mismatched) means our
+  // TX never reached the wire or RX is mute — don't let it wedge the bus-clear
+  // gate forever.
+  if (!gea2_echo_buf_.empty() && millis() - gea2_echo_at_ms_ >= GEA2_ECHO_TIMEOUT_MS) {
+    ESP_LOGW(TAG, "GEA2 TX echo missing (%zu/%zu bytes seen) — check the TX/RX wiring", gea2_echo_idx_,
+             gea2_echo_buf_.size());
+    gea2_echo_buf_.clear();
+    gea2_echo_idx_ = 0;
   }
 
   // Log RX stats every 10 s so we can confirm the UART is receiving at all.
   uint32_t now_stats = millis();
   if (now_stats - last_stats_ms_ >= 10000) {
     last_stats_ms_ = now_stats;
-    ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s", rx_byte_count_,
-             is_bus_connected() ? "CONNECTED" : "no valid packets yet");
+    if (protocol_ == Protocol::GEA2) {
+      ESP_LOGD(TAG, "RX stats: %u bytes total, %u TX collisions, bus %s", rx_byte_count_, tx_collisions_,
+               is_bus_connected() ? "CONNECTED" : "no valid packets yet");
+    } else {
+      ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s", rx_byte_count_,
+               is_bus_connected() ? "CONNECTED" : "no valid packets yet");
+    }
   }
 
   if (protocol_ == Protocol::GEA2) {
@@ -595,16 +677,20 @@ void GEAComponent::loop() {
 
   // Request queue: retry pending on timeout, or promote the next queued
   // request when idle.  Only one request is in flight at a time so request_id
-  // matching on the response is unambiguous.
+  // matching on the response is unambiguous.  On GEA2 both transmit paths
+  // additionally wait for the bus to be clear (collision avoidance); a busy
+  // line just defers to a later loop() pass.
   uint32_t now_req = millis();
   if (pending_active_) {
     if (now_req - pending_.sent_at_ms >= REQUEST_TIMEOUT_MS) {
       if (pending_.retries_left > 0) {
-        pending_.retries_left--;
-        tx_retries_++;
-        ESP_LOGD(TAG, "Request cmd=0x%02X id=0x%02X timed out, retrying (%u left)", pending_.cmd, pending_.req_id,
-                 pending_.retries_left);
-        transmit_pending_();
+        if (gea2_bus_clear_()) {
+          pending_.retries_left--;
+          tx_retries_++;
+          ESP_LOGD(TAG, "Request cmd=0x%02X id=0x%02X timed out, retrying (%u left)", pending_.cmd, pending_.req_id,
+                   pending_.retries_left);
+          transmit_pending_();
+        }
       } else {
         if (pending_.is_discovery) {
 #ifdef GEA_GEA2_DISCOVERY
@@ -618,7 +704,7 @@ void GEAComponent::loop() {
       }
     }
   }
-  if (!pending_active_ && !request_queue_.empty()) {
+  if (!pending_active_ && !request_queue_.empty() && gea2_bus_clear_()) {
     pending_ = std::move(request_queue_.front());
     request_queue_.pop_front();
     pending_active_ = true;
@@ -767,6 +853,8 @@ void GEAComponent::drive_gea2_addr_discovery_() {
     // Wait out the cooldown between rounds, then start a fresh probe.
     if (now - addr_probe_at_ms_ < GEA2_ADDR_PROBE_COOLDOWN_MS)
       return;
+    if (!gea2_bus_clear_())
+      return;  // yield to ongoing traffic; probe on a later pass
     addr_candidates_.clear();
     send_gea2_addr_probe_();
     addr_probe_inflight_ = true;
@@ -876,11 +964,12 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
   ESP_LOGV(TAG, "RX frame: dest=0x%02X src=0x%02X len=%zu", dest, src, pkt.size());
 
   // On the half-duplex GEA2 bus, everything we transmit is echoed back on RX.
-  // A frame whose SRC is our own address is never a genuine inbound message, so
-  // drop it before the generic dest filter: otherwise broadcast probes
-  // (dest=0xFF) re-enter as phantom packets, and the echo masquerades as foreign
-  // traffic. Logged at VERBOSE only: it fires on every transmit and is useful
-  // purely as a wiring/echo-path sanity check during deep debugging.
+  // The echo is normally consumed byte-by-byte upstream (consume_gea2_echo_byte_,
+  // which doubles as collision detection), so this SRC check is a fallback for
+  // echo bytes that slip through — e.g. after an echo timeout.  A frame whose
+  // SRC is our own address is never a genuine inbound message, so drop it
+  // before the generic dest filter: otherwise broadcast probes (dest=0xFF)
+  // re-enter as phantom packets, and the echo masquerades as foreign traffic.
   if (src == src_addr_) {
     ESP_LOGV(TAG, "RX: self-echo (TX loopback) from 0x%02X, dropping", src);
     return;

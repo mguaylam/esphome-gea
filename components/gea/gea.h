@@ -228,6 +228,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   uint32_t get_crc_errors() const { return crc_errors_; }
   uint32_t get_tx_retries() const { return tx_retries_; }
   uint32_t get_dropped_requests() const { return dropped_requests_; }
+  uint32_t get_tx_collisions() const { return tx_collisions_; }
 
   // ---- on_erd_change triggers (registered from Python codegen) ------------
   void register_erd_change_trigger(ErdChangeTrigger *trigger) { erd_change_triggers_.push_back(trigger); }
@@ -247,6 +248,10 @@ class GEAComponent : public uart::UARTDevice, public Component {
   void finish_pending_();
   bool response_matches_pending_(uint8_t response_cmd, uint8_t req_id) const;
   bool gea2_response_matches_pending_(uint8_t response_cmd, uint16_t erd) const;
+
+  // GEA2 collision avoidance (bus-idle gate) and detection (TX echo check)
+  bool gea2_bus_clear_() const;
+  bool consume_gea2_echo_byte_(uint8_t byte);
 
   // RX state machine
   void process_rx_byte_(uint8_t byte);
@@ -295,6 +300,28 @@ class GEAComponent : public uart::UARTDevice, public Component {
   PendingRequest pending_{};
   bool pending_active_{false};
 
+  // GEA2 collision handling (single-wire half-duplex bus — every node hears
+  // every byte, including its own transmissions).
+  //
+  // Avoidance: a transmission may only start after the line has been silent
+  // for GEA2_TX_IDLE_MS.  One byte at 19200 baud is ~0.52 ms, so 10 ms of
+  // silence places us well clear of other nodes' frames and inter-byte gaps.
+  static constexpr uint32_t GEA2_TX_IDLE_MS = 10;
+  // Detection: the wire image of our last transmission is kept and matched
+  // byte-for-byte against the bus echo.  If the echo never completes within
+  // this window, assume it never will (TX open / RX mute) and unwedge.
+  static constexpr uint32_t GEA2_ECHO_TIMEOUT_MS = 100;
+  // After a detected collision the pending request is retried after a short
+  // random backoff (min + [0, span)) instead of the full request timeout.
+  static constexpr uint32_t GEA2_COLLISION_BACKOFF_MIN_MS = 2;
+  static constexpr uint32_t GEA2_COLLISION_BACKOFF_SPAN_MS = 18;
+  std::vector<uint8_t> gea2_echo_buf_;  // expected echo (exact wire bytes)
+  size_t gea2_echo_idx_{0};             // match cursor into gea2_echo_buf_
+  uint32_t gea2_echo_at_ms_{0};         // when the frame was written (for the timeout)
+  // Timestamp of the last byte seen on RX — any byte, framed or not. Drives
+  // the bus-idle gate; last_rx_ms_ can't, it only moves on valid packets.
+  uint32_t last_rx_byte_ms_{0};
+
   // Timestamp of the last successfully received packet (ms since boot, 0 = none).
   uint32_t last_rx_ms_{0};
 
@@ -313,6 +340,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   uint32_t crc_errors_{0};
   uint32_t tx_retries_{0};
   uint32_t dropped_requests_{0};
+  uint32_t tx_collisions_{0};
 
   // ERD discovery map: ERD address → most recently received data bytes.
   // Populated on first publication of each ERD; updated silently thereafter.
