@@ -35,6 +35,13 @@ sensor:
     lambda: 'return id(gea_hub).get_dropped_requests();'
     update_interval: 30s
 
+  - platform: template
+    name: "GEA TX Collisions"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    lambda: 'return id(gea_hub).get_tx_collisions();'
+    update_interval: 30s
+
 binary_sensor:
   - platform: template
     name: "GEA Bus Connected"
@@ -49,6 +56,7 @@ binary_sensor:
 | `get_crc_errors()` | `uint32_t` | a framed packet whose CRC does not match |
 | `get_tx_retries()` | `uint32_t` | a pending request times out and is resent |
 | `get_dropped_requests()` | `uint32_t` | a pending request exhausts all retries |
+| `get_tx_collisions()` | `uint32_t` | a GEA2 bus collision is detected (TX echo differs from what was sent — see [Protocol & internals](protocol.md)) |
 | `is_bus_connected()` | `bool` | `true` when a valid packet has been received in the last 30 s |
 | `get_dest_address()` | `uint8_t` | the appliance address in use (resolved by GEA2 address discovery, or as configured) |
 | `is_address_resolved()` | `bool` | `false` while GEA2 address discovery is still probing or halted; `true` once an address is known |
@@ -101,6 +109,11 @@ text_sensor:
   concerning and warrants protocol-level inspection (start with
   [Troubleshooting](troubleshooting.md)).
 - **TX retries** is normal in small numbers under bus contention.
+- **TX collisions** (GEA2) should stay flat or tick up only occasionally —
+  each one is recovered automatically with a fast retry. A steadily climbing
+  counter means heavy bus contention and is worth a field report in
+  [Discussion #3](https://github.com/mguaylam/esphome-gea/discussions/3).
+  The counter also appears in the 10 s RX stats log line.
 
 ## Logging levels
 
@@ -111,16 +124,20 @@ since the per-frame output is high-volume.
 | Level | What the GEA component emits | When to use it |
 |-------|------------------------------|----------------|
 | `ERROR` | *(none today)* | — |
-| `WARN` | CRC mismatch, ERD read/write failed (`result != 0`), request dropped after exhausting retries, subscribe-all rejected, unexpected response shape, discovery cap reached | Always visible — anomalies worth attention |
+| `WARN` | CRC mismatch, ERD read/write failed (`result != 0`), request dropped after exhausting retries, subscribe-all rejected, unexpected response shape, discovery cap reached, GEA2 TX echo missing (wiring fault) | Always visible — anomalies worth attention |
 | `INFO` | ERD values read, auto-detected appliance address, subscription state changes, discovery progress/results, poll list built | Useful default in normal operation |
 | `CONFIG` | Configuration dump at boot (`dump_config`) | Startup only |
-| `DEBUG` *(default)* | STX / valid-packet markers, "ignoring packet" from another node, 10 s RX stats, write OK, retry on timeout | Routine diagnostics |
-| `VERBOSE` | Per-frame RX dump, unexpected bytes, unmatched responses, keep-alive, GEA2 TX self-echo (loopback) | Deep wiring / protocol debugging |
+| `DEBUG` *(default)* | STX / valid-packet markers, "ignoring packet" from another node, 10 s RX stats (includes the TX collision count on GEA2), write OK, retry on timeout, GEA2 collision detected + fast retry | Routine diagnostics |
+| `VERBOSE` | Per-frame RX dump, unexpected bytes, unmatched responses, keep-alive, GEA2 TX echo verified / self-echo fallback drop | Deep wiring / protocol debugging |
 
 On the half-duplex GEA2 bus everything the MCU transmits is echoed back on RX
-(see [Protocol & internals](protocol.md)). That self-echo is identified by its
-source address matching our own and dropped at `VERBOSE` — it does not count
-toward bus liveness and is not treated as foreign traffic.
+(see [Protocol & internals](protocol.md)). The echo is matched byte-by-byte
+against what was sent — silently when it matches (`VERBOSE` confirms it), at
+`DEBUG` when it doesn't (collision detected, fast retry), and with a `WARN`
+when it never arrives (wiring fault). An echoed frame that slips past the
+matcher is still identified by its source address matching our own and dropped
+at `VERBOSE` — it does not count toward bus liveness and is not treated as
+foreign traffic.
 
 ## See also
 
