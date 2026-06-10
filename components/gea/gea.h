@@ -2,6 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/optional.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/preferences.h"
@@ -318,6 +319,11 @@ class GEAComponent : public uart::UARTDevice, public Component {
   std::vector<uint8_t> gea2_echo_buf_;  // expected echo (exact wire bytes)
   size_t gea2_echo_idx_{0};             // match cursor into gea2_echo_buf_
   uint32_t gea2_echo_at_ms_{0};         // when the frame was written (for the timeout)
+  // Runs loop() continuously while a GEA2 exchange is in flight so the echo
+  // matcher, backoff retries and the bus-idle gate react at millisecond
+  // resolution instead of the ~16 ms default loop interval.  Released as soon
+  // as the bus goes quiet, so the idle polling cadence costs nothing.
+  HighFrequencyLoopRequester high_freq_;
   // Timestamp of the last byte seen on RX — any byte, framed or not. Drives
   // the bus-idle gate; last_rx_ms_ can't, it only moves on valid packets.
   uint32_t last_rx_byte_ms_{0};

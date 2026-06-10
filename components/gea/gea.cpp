@@ -710,6 +710,16 @@ void GEAComponent::loop() {
     pending_active_ = true;
     transmit_pending_();
   }
+
+  // While a GEA2 exchange is in flight, ask the scheduler to run loop()
+  // continuously (see high_freq_ in gea.h).  start()/stop() are idempotent.
+  if (protocol_ == Protocol::GEA2) {
+    if (pending_active_ || !gea2_echo_buf_.empty()) {
+      high_freq_.start();
+    } else {
+      high_freq_.stop();
+    }
+  }
 }
 
 // =============================================================================
