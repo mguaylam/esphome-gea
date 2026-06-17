@@ -734,7 +734,7 @@ void GEAComponent::poll_next_() {
 // GEAComponent — GEA2 active address discovery
 // =============================================================================
 
-// Broadcast a GEA2 read of a universal identity ERD. Whichever node answers
+// Broadcast a GEA2 read of the appliance-type ERD. Whichever node answers
 // reveals its address in the SRC field of its response (captured in
 // process_packet_ via record_addr_candidate_).
 void GEAComponent::send_gea2_addr_probe_() {
