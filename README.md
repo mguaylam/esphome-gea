@@ -153,6 +153,7 @@ Complete configurations for known appliances:
 |------|-----------|------------|
 | [`PDP715SYV0FS.yaml`](devices/dishwasher/PDP715SYV0FS.yaml) | GE PDP715SYV0FS dishwasher | Cycle selection, elapsed time, ASCII cycle name, model retrieval |
 | [`PFQ97HSPVDS.yaml`](devices/washer/PFQ97HSPVDS.yaml) | GE PFQ97HSPVDS Ultrafast Combo | Time remaining, door/lock/pump sensors, 200+ cycle options, remote start/stop, dosing |
+| [`PFQ97HSPVDS.yaml`](devices/dryer/GTD72EBPN0DG.yaml) | GE GTD72EBPN0DG Standard Electric Dryer | GEA2, time remaining, door, cycle/heat settings |
 
 Got a working config for another appliance? PRs welcome.
 
