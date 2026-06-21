@@ -16,6 +16,7 @@ jobs:
         config:
           - devices/dishwasher/PDP715SYV0FS.yaml
           - devices/washer/PFQ97HSPVDS.yaml
+          - devices/water-heater/RE2H50S10.yaml
 
     steps:
       - uses: actions/checkout@v4
