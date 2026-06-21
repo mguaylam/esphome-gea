@@ -69,6 +69,24 @@ gea:
 - **poll_interval** (*Optional*, time — GEA2 only): How long the round-robin
   poller waits between successive ERD reads. Defaults to `2s`. Smaller values
   refresh state faster but increase bus load. Ignored on GEA3.
+
+  Only one read is in flight at a time, so the time to refresh every declared
+  ERD is roughly:
+
+  ```
+  full cycle ≈ number_of_ERDs × max(poll_interval, ~35 ms)
+  ```
+
+  The `~35 ms` is a hardware floor: a single GEA2 read-and-response takes about
+  30–40 ms on the 19200-baud bus, so setting `poll_interval` below that gains
+  nothing — the poller is already running back-to-back. **For fast polling,
+  `100ms` is the recommended floor.** It keeps each ERD fresh (a ~15-ERD set
+  cycles in ~1.5 s) while leaving the bus idle ~65 % of the time so the
+  appliance's own internal traffic (control board ↔ UI board ↔ Wi-Fi module)
+  and the collision-avoidance gate both have room. Going to `50ms` or below
+  pushes bus occupancy past ~70 % and narrows the silence between reads to near
+  the ~10 ms the collision gate needs, which tends to raise retries for little
+  freshness gain.
 - **erd_lookup** (*Optional*, boolean): Embed the public GE ERD definition set
   (~75 KB flash) so discovery logs include each ERD's documented name, type,
   and decoded value. Defaults to `false`.
