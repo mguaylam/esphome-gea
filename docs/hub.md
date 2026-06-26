@@ -40,7 +40,7 @@ gea:
   id: gea_hub
   uart_id: uart_gea
   protocol: gea2
-  dest_address: 0xC0     # required — auto-detect not possible on GEA2
+  dest_address: 0xC0     # optional — omit to let the hub discover it at boot
   poll_interval: 2s      # how often to refresh each declared ERD
 ```
 
@@ -56,13 +56,37 @@ gea:
   differences.
 - **src_address** (*Optional*, hex byte): The address this device claims on the
   GEA bus. Defaults to `0xBB`.
-- **dest_address** (*Optional* on GEA3 / *Required* on GEA2, hex byte):
-  The address of the appliance. On GEA3 the hub can auto-detect it from the
-  first valid packet; GEA2 has no spontaneous traffic so this must be set
-  explicitly. Typical value: `0xC0`.
+- **dest_address** (*Optional*, hex byte): The address of the appliance.
+  - On **GEA3** the hub auto-detects it from the first valid packet.
+  - On **GEA2** there is no spontaneous traffic, so if you omit `dest_address`
+    the hub *actively discovers* it at boot: it broadcasts a read of a universal
+    identity ERD (`0x0001`, model number) and adopts the address of whichever
+    node replies, logging it at `INFO`. If **exactly one** appliance answers it
+    is adopted automatically; if **several** answer (a multi-node bus) the hub
+    halts and asks you to pick one. Pinning `dest_address: 0xC0` explicitly skips
+    this probe on every boot — recommended once you know the value. Typical
+    value: `0xC0`.
 - **poll_interval** (*Optional*, time — GEA2 only): How long the round-robin
   poller waits between successive ERD reads. Defaults to `2s`. Smaller values
   refresh state faster but increase bus load. Ignored on GEA3.
+
+  Only one read is in flight at a time, so the time to refresh every declared
+  ERD is roughly:
+
+  ```
+  full cycle ≈ number_of_ERDs × max(poll_interval, ~35 ms)
+  ```
+
+  The `~35 ms` is a hardware floor: a single GEA2 read-and-response takes about
+  30–40 ms on the 19200-baud bus, so setting `poll_interval` below that gains
+  nothing — the poller is already running back-to-back. **For fast polling,
+  `100ms` is the recommended floor.** It keeps each ERD fresh (a ~15-ERD set
+  cycles in ~1.5 s) while leaving the bus idle ~65 % of the time so the
+  appliance's own internal traffic (control board ↔ UI board ↔ Wi-Fi module)
+  and the collision-avoidance gate both have room. Going to `50ms` or below
+  pushes bus occupancy past ~70 % and narrows the silence between reads to near
+  the ~10 ms the collision gate needs, which tends to raise retries for little
+  freshness gain.
 - **erd_lookup** (*Optional*, boolean): Embed the public GE ERD definition set
   (~75 KB flash) so discovery logs include each ERD's documented name, type,
   and decoded value. Defaults to `false`.

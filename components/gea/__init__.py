@@ -240,13 +240,13 @@ def validate_nonzero_multiplier(value):
     return f
 
 
-def _validate_gea2_requires_dest(config):
-    """GEA2 has no spontaneous traffic, so auto-detect can't work — require dest_address."""
-    if config[CONF_PROTOCOL] == "gea2" and CONF_DEST_ADDRESS not in config:
-        raise cv.Invalid(
-            "protocol: gea2 requires dest_address (auto-detect needs spontaneous "
-            "traffic that GEA2 doesn't produce). Typical value: 0xC0."
-        )
+def _validate_gea2_options(config):
+    """gea2_discovery only applies to GEA2.
+
+    dest_address may be omitted for GEA2: the component then probes the bus
+    (broadcast read of a universal ERD) to discover the appliance address and
+    logs it. Pinning dest_address explicitly skips that probe on every boot.
+    """
     if config.get(CONF_GEA2_DISCOVERY) and config[CONF_PROTOCOL] != "gea2":
         raise cv.Invalid("gea2_discovery is only valid with protocol: gea2")
     return config
@@ -259,8 +259,9 @@ CONFIG_SCHEMA = cv.All(
             # gea3 (default): full-duplex, 230400 baud, subscribe-all + publications.
             # gea2: half-duplex, 19200 baud, no subscriptions — values are polled.
             cv.Optional(CONF_PROTOCOL, default="gea3"): cv.one_of(*PROTOCOLS, lower=True),
-            # dest_address is optional for GEA3 (auto-detected from first packet) but
-            # required for GEA2 since the appliance never speaks unprompted.
+            # dest_address is optional for both protocols. GEA3: auto-detected
+            # from the first packet. GEA2: if omitted, the bus is probed at boot
+            # to discover the appliance address (see _validate_gea2_options).
             cv.Optional(CONF_DEST_ADDRESS): cv.hex_uint8_t,
             cv.Optional(CONF_SRC_ADDRESS, default=0xBB): cv.hex_uint8_t,
             # GEA2-only: how long to wait between successive ERD reads in the
@@ -288,7 +289,7 @@ CONFIG_SCHEMA = cv.All(
             ),
         }
     ).extend(uart.UART_DEVICE_SCHEMA),
-    _validate_gea2_requires_dest,
+    _validate_gea2_options,
 )
 
 

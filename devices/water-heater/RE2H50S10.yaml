@@ -1,0 +1,389 @@
+# Comments
+# - This is a Bradford White Hot Water Heater. But it uses GEA2 protocol, yay!
+# - The unit was set up with its display in Fahrenheit. That only affects the
+#   panel: GE/GEA back-ends always report and accept imperial units regardless
+#   of the display-unit setting, so the values here are stable. The ESPHome
+#   component assumes Celsius, so the water_heater template below converts
+#   °F <-> °C for Home Assistant.
+# - haven't tested away/vacation mode yet. Not sure how 0x4025  # Vacation Setpoint Temperature works with this.
+# - unsetting away assumes Heat Pump mode.
+# - modes
+#   - esphome/HA Off maps to water heater Vacation. not sure if there's a time expiration on this
+#   - esphome/HA performance maps to water heater Hybrid Standard
+#   - esphome/HA high demand maps to water heater Hybrid Plus
+# - reported ERDs at the bottom, with brief comments
+# - success with first build adapter (burkemw3) and mulcmu adapter (mannkind)
+# - mannkind did initial work in https://community.home-assistant.io/t/water-heater-bradford-white/588528/25, burkemw3 did polishing
+
+# GEA2 discovery complete — 44 ERDs responded out of 2445 scanned
+# Copy the ERDs below into your YAML to build your configuration:
+# Field information: https://raw.githubusercontent.com/geappliances/public-appliance-api-documentation/refs/heads/main/appliance_api_erd_definitions.json
+#   0x0001  # Model Number - looks correct
+#   0x0002  # Serial Number - haven't checked
+#   0x0007  # Temperature Display Units - haven't checked
+#   0x0008  # Appliance Type - haven't checked
+#   0x4020  # Water Heater User Mode - looks correct
+#   0x4023  # Vacation Fallback Mode - haven't checked
+#   0x4024  # User Setpoint Temperature - looks correct
+#   0x4025  # Vacation Setpoint Temperature - not sure yet
+#   0x4026  # Actual Setpoint Temperature - looks correct
+#   0x4028  # Timed Mode Hours Remaining - haven't checked
+#   0x4040  # Available Modes - looks correct
+#   0x4041  # Tank size - haven't checked
+#   0x4047  # Min/max allowed setpoint - looks correct
+#   0x4048  # Min/max allowed vacation setpoint - haven't checked
+#   0x4049  # Max allowed vacation hours - haven't checked
+#   0x404A  # Max allowed standard electric hours - haven't checked
+#   0x404C  # Anode depleted mass - reported zeroes, probably doesn't work
+#   0x404D  # Anode hours of service - reported zeroes, probably doesn't work
+#   0x4056  # Diagnostic Failure counts - haven't checked
+#   0x4058  # Heating Issues - haven't checked
+#   0x405F  # T1 Temperature - haven't checked
+#   0x4060  # T2 Temperature - mannkind called this ambinent, I went with it, looks plausible
+#   0x4061  # T3a Temperature - haven't checked
+#   0x4062  # T3b Temperature - haven't checked
+#   0x4063  # T4 Temperature - haven't checked
+#   0x4064  # T5 Temperature - mannkind called this ambinent, I went with it, looks plausible
+#   0x4065  # Measured current - looks correct
+#   0x4066  # Measured voltage - looks slightly high, but correct
+#   0x4068  # Relay status - looks correct
+#   0x4069  # Flow state - reported zeroes, probably doesn't work
+#   0x406E  # T6 Temperature - haven't checked
+#   0x4081  # Anode alarm active - haven't checked, doubt it works since other anode checks don't
+#   0x4082  # Accessory low battery alarm active - haven't checked
+#   0x4083  # Accessory leak detected alarm active - haven't checked
+#   0x4101  # Missed flow off counter - haven't checked
+#   0x4102  # Heating cycle satisfied - didn't see this ever change
+#   0x4103  # Heating cycle started - this changed, but not in a way that made sense to me
+#   0x4105  # Missed flow off fault counter - haven't checked, doubt it works since flow state doesn't
+#   0x4107  # Water Heater Reset Information - haven't checked
+#   0x6003  # Wireless Connection State - haven't checked
+#   0xD001  # DSM Override Status - haven't checked
+#   0xD002  # DSM Override Allowed - haven't checked
+#   0xD007  # Appliance Cumulative Energy - this look like it's power, not energy, and u16_be, not u32
+#   0xD008  # Available Demand Response Modes - haven't checked
+
+esphome:
+  name: bw-water-heater
+  friendly_name: Bradford White Water Heater
+  project:
+    name: BradfordWhite.RE2H50S10
+    version: "1.0.0"
+
+# Board/pins reflect the FirstBuild adapter. Adjust if yours differs.
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [gea]
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+web_server:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "bw-water-heater fallback"
+    password: !secret ap_password
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+uart:
+  id: uart_gea
+  tx_pin: GPIO9
+  rx_pin: GPIO10
+  baud_rate: 19200
+
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  protocol: gea2
+  src_address: 0xBB
+  dest_address: 0x60
+  erd_lookup: true
+
+sensor:
+  # Raw command equivalent: 0xDE 0x10 (Request Current Status) byte 2, uint8 °F,
+  # or 0x56 (Hyper Terminal Data) bytes 5-6, °F x10
+  - platform: gea
+    gea_id: gea_hub
+    name: "Tank Temperature"
+    id: tank_temperature
+    internal: true
+    erd: 0x4060
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    state_class: measurement
+    device_class: temperature
+  # erd docs say cumulative energy in Wh, but empirically, this is power
+  - platform: gea
+    gea_id: gea_hub
+    id: power
+    name: "Power"
+    erd: 0xD007
+    decode: uint16_be # despite ERD docs, this matches burkemw3's observations
+    accuracy_decimals: 0
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+
+  - platform: total_daily_energy
+    name: "Total Daily Energy"
+    power_id: power
+    unit_of_measurement: "kWh"
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+  # Raw command equivalent: 0xDE 0x10 (Request Current Status) byte 1,
+  # vacation days remaining (the ERD API tracks hours, not days)
+  - platform: gea
+    gea_id: gea_hub
+    name: "Timed Mode Hours Remaining"
+    erd: 0x4028
+    decode: uint16_be
+    unit_of_measurement: "h"
+  # Raw command equivalent: 0x56 (Hyper Terminal Data) bytes 13-14, T5 °F x10
+  - platform: gea
+    gea_id: gea_hub
+    name: "Ambient Temperature"
+    erd: 0x4064
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+  # Raw command equivalent: 0xDE 0x10 (Request Current Status) byte 3, uint8 °F.
+  # Differs from the user setpoint while in Vacation or Demand Response.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Actual Setpoint"
+    erd: 0x4026
+    decode: int16_be
+    internal: true
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+  # Raw command equivalent: 0xF8 (Request Vacation Range) byte 1, max days
+  - platform: gea
+    gea_id: gea_hub
+    name: "Max Vacation Hours"
+    erd: 0x4049
+    decode: uint16_be
+    unit_of_measurement: "h"
+    entity_category: diagnostic
+  # Ceiling for the Electric (Only) timed mode; the countdown shows in
+  # Timed Mode Hours Remaining (0x4028) while that mode is active.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Max Electric (Only) Hours"
+    erd: 0x404A
+    decode: uint16_be
+    unit_of_measurement: "h"
+    entity_category: diagnostic
+globals:
+  # Last mode category seen by the select, so on_value only acts on a real
+  # transition (it fires on every poll re-read too). -1 forces a write on the
+  # first read after boot. Not restored, so a reboot re-arms max hours.
+  - id: wh_last_mode
+    type: int
+    restore_value: no
+    initial_value: '-1'
+select:
+  # Raw command equivalent: read 0xDE 0x10 byte 0, write 0xDF 0x14 [mode].
+  # Enum per GE public ERD definitions for 0x4020 (the HEWH doc's worked
+  # examples swap 2/3, but its command table and the ERD set agree).
+  # Electric (Only) and Vacation are timed modes; whenever the mode changes
+  # into either one (from here, the appliance panel, or a script), on_value
+  # writes that mode's max duration to 0x4028 so it runs as long as possible.
+  - platform: gea
+    gea_id: gea_hub
+    id: operating_mode
+    name: "Operating Mode"
+    internal: true
+    erd: 0x4020
+    decode: uint8
+    data_size: 1
+    options:
+      0: "Hybrid Standard"
+      1: "Electric (Only)"
+      2: "Heat Pump (Only)"
+      3: "Hybrid Plus"
+      4: "Vacation"
+    on_value:
+      - lambda: |-
+          int m = (x == "Electric (Only)") ? 1 : (x == "Vacation") ? 4 : 0;
+          if (m == id(wh_last_mode))
+            return;
+          id(wh_last_mode) = m;
+          if (m == 1)
+            id(electric_hours_write).press();
+          else if (m == 4)
+            id(vacation_hours_write).press();
+button:
+  # Internal helpers pressed by the Operating Mode select's on_value handler.
+  # Both write the timed-mode duration ERD 0x4028 to that mode's max so it
+  # runs as long as possible. The unit clamps to its real limit if a value
+  # ever exceeds it (the post-write re-read of 0x4028 shows what was stored).
+  # 0x12A8 = 4776 hours (~199 days) — max from ERD 0x4049.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Vacation Hours Write"
+    id: vacation_hours_write
+    internal: true
+    erd: 0x4028
+    payload: [0x12, 0xA8]
+  # 0x0948 = 2376 hours (~99 days) — max from ERD 0x404A.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Electric Hours Write"
+    id: electric_hours_write
+    internal: true
+    erd: 0x4028
+    payload: [0x09, 0x48]
+number:
+  # Raw command equivalent: read 0xDE 0x10 byte 3, write 0xA5 [°F, 1 byte].
+  # min_value matches the unit's enforced floor (~100 °F); confirm against the
+  # Min Allowed Setpoint sensor (ERD 0x4047) and adjust if it differs.
+  # Writes are declined during Demand Response events.
+  - platform: gea
+    gea_id: gea_hub
+    id: setpoint
+    name: "Setpoint"
+    internal: true
+    erd: 0x4024
+    decode: int16_be
+    multiplier: 0.1
+    min_value: 100
+    max_value: 140
+    step: 1
+    unit_of_measurement: "°F"
+  # Raw command equivalent: byte 3 of 0xDF 0x14 (Set Mode) when entering
+  # Vacation; normally 50-60°F. Held in ERD 0x4025, applied while away.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Vacation Setpoint"
+    erd: 0x4025
+    decode: int16_be
+    multiplier: 0.1
+    min_value: 50
+    max_value: 140
+    step: 1
+    unit_of_measurement: "°F"
+binary_sensor:
+  - platform: template
+    name: "GEA Bus Connected"
+    entity_category: diagnostic
+    lambda: 'return id(gea_hub).is_bus_connected();'
+  - platform: gea
+    gea_id: gea_hub
+    id: compressor_on
+    name: "compressor_on"
+    erd: 0x4068
+    bitmask: 0x02
+    byte_offset: 1
+  - platform: gea
+    gea_id: gea_hub
+    id: upper_on
+    name: "upper_on"
+    erd: 0x4068
+    bitmask: 0x04
+    byte_offset: 1
+  - platform: gea
+    gea_id: gea_hub
+    id: lower_on
+    name: "lower_on"
+    erd: 0x4068
+    bitmask: 0x08
+    byte_offset: 1
+  - platform: gea
+    gea_id: gea_hub
+    name: "fan_on"
+    erd: 0x4068
+    bitmask: 0x10
+    byte_offset: 1
+  - platform: template
+    name: "is_on"
+    id: is_on
+    internal: true
+    lambda: 'return id(compressor_on).state || id(upper_on).state || id(lower_on).state;'
+
+
+water_heater:
+  - platform: template
+    name: "GEA Water Heater"
+    id: gea_water_heater
+    current_temperature: !lambda 'return (id(tank_temperature).state - 32.0) * 5.0/9.0;'
+    target_temperature: !lambda 'return (id(setpoint).state - 32.0) * 5.0/9.0;'
+    away: !lambda 'return id(operating_mode).current_option() == "Vacation";'
+    mode: |-
+      auto current_mode = id(operating_mode).current_option();
+      if (current_mode == "Hybrid Standard") return WATER_HEATER_MODE_PERFORMANCE;
+      else if (current_mode == "Electric (Only)") return WATER_HEATER_MODE_ELECTRIC;
+      else if (current_mode == "Heat Pump (Only)") return WATER_HEATER_MODE_HEAT_PUMP;
+      else if (current_mode == "Hybrid Plus") return WATER_HEATER_MODE_HIGH_DEMAND;
+      else if (current_mode == "Vacation") return WATER_HEATER_MODE_OFF;
+      else return WATER_HEATER_MODE_OFF;
+    is_on: !lambda 'return id(is_on).state;'
+    set_action:
+      - lambda: |-
+          if (id(gea_water_heater).is_away()) {
+            auto call = id(operating_mode).make_call();
+            call.set_option("Vacation");
+            call.perform();
+            return;
+          } else {
+            if (id(gea_water_heater).get_mode() == WATER_HEATER_MODE_OFF) {
+              auto call = id(operating_mode).make_call();
+              call.set_option("Heat Pump (Only)");
+              call.perform();
+              return;
+            }
+          }
+          auto mode_call = id(operating_mode).make_call();
+          switch (id(gea_water_heater).get_mode()) {
+            case WATER_HEATER_MODE_OFF: mode_call.set_option("Vacation"); break;
+            case WATER_HEATER_MODE_PERFORMANCE: mode_call.set_option("Hybrid Standard"); break;
+            case WATER_HEATER_MODE_HEAT_PUMP: mode_call.set_option("Heat Pump (Only)"); break;
+            case WATER_HEATER_MODE_HIGH_DEMAND: mode_call.set_option("Hybrid Plus"); break;
+            case WATER_HEATER_MODE_ELECTRIC: mode_call.set_option("Electric (Only)"); break;
+          }
+          mode_call.perform();
+          auto setpoint_call = id(setpoint).make_call();
+          setpoint_call.set_value(id(gea_water_heater).get_target_temperature() * 9.0/5.0 + 32);
+          setpoint_call.perform();
+    optimistic: true
+    supported_modes:
+      - "OFF"
+      - PERFORMANCE
+      - HEAT_PUMP
+      - HIGH_DEMAND
+      - ELECTRIC
+    visual:
+      min_temperature: 38
+      max_temperature: 60
+      target_temperature_step: 1

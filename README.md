@@ -8,7 +8,7 @@
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-compatible-41bdf5?logo=home-assistant)](https://www.home-assistant.io/)
 [![ESP32](https://img.shields.io/badge/ESP32-supported-red?logo=espressif)](https://www.espressif.com/)
 
-An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances via the **GEA2 or GEA3 serial bus**, with native [Home Assistant](https://www.home-assistant.io/) integration.
+An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances — and other appliances supporting the GEA bus — via the **GEA2 or GEA3 serial bus**, with native [Home Assistant](https://www.home-assistant.io/) integration.
 
 ---
 
@@ -153,6 +153,7 @@ Complete configurations for known appliances:
 |------|-----------|------------|
 | [`PDP715SYV0FS.yaml`](devices/dishwasher/PDP715SYV0FS.yaml) | GE PDP715SYV0FS dishwasher | Cycle selection, elapsed time, ASCII cycle name, model retrieval |
 | [`PFQ97HSPVDS.yaml`](devices/washer/PFQ97HSPVDS.yaml) | GE PFQ97HSPVDS Ultrafast Combo | Time remaining, door/lock/pump sensors, 200+ cycle options, remote start/stop, dosing |
+| [`RE2H50S10.yaml`](devices/water-heater/RE2H50S10.yaml) | Bradford White AeroTherm heat pump water heater | GEA2 bus, water_heater template with °F↔°C conversion, heat pump / hybrid / vacation modes |
 
 Got a working config for another appliance? PRs welcome.
 

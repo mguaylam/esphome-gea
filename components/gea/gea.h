@@ -2,6 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/optional.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/preferences.h"
@@ -170,6 +171,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // dest_address is optional: if not called, auto-detect is used instead.
   void set_dest_address(uint8_t addr) {
     dest_addr_ = addr;
+    dest_configured_ = true;
     auto_detect_ = false;
   }
   void set_src_address(uint8_t addr) { src_addr_ = addr; }
@@ -190,7 +192,29 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // Returns true if a valid packet has been received within the last 30 s.
   bool is_bus_connected() const { return last_rx_ms_ != 0 && (millis() - last_rx_ms_) < 30000; }
 
+  // The appliance (destination) address the hub talks to. On GEA2 with no
+  // dest_address this is filled in by address discovery; while still probing it
+  // reads as the broadcast address (0xFF). Surface it as a template text_sensor
+  // to keep it visible after boot (the discovery log only prints once):
+  //   text_sensor:
+  //     - platform: template
+  //       name: "GEA appliance address"
+  //       entity_category: diagnostic
+  //       lambda: |-
+  //         char buf[7];
+  //         snprintf(buf, sizeof(buf), "0x%02X", id(gea_hub).get_dest_address());
+  //         return std::string(buf);
+  uint8_t get_dest_address() const { return dest_addr_; }
+  // False while GEA2 address discovery is still probing or has halted on an
+  // ambiguous bus; true once an address is known (discovered or configured).
+  bool is_address_resolved() const { return !gea2_addr_discovery_; }
+
   // ---- Diagnostics — callable from YAML lambdas ---------------------------
+  // Logs the appliance address and how it was determined, at INFO level. The
+  // address is printed once at boot; call this on api: on_client_connected to
+  // see it again after connecting over the network.
+  void log_address() const;
+
   // Logs all discovered ERDs at INFO level. Useful to call on api: on_client_connected
   // so the list appears each time you open the console.
   void log_erds() const;
@@ -205,6 +229,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   uint32_t get_crc_errors() const { return crc_errors_; }
   uint32_t get_tx_retries() const { return tx_retries_; }
   uint32_t get_dropped_requests() const { return dropped_requests_; }
+  uint32_t get_tx_collisions() const { return tx_collisions_; }
 
   // ---- on_erd_change triggers (registered from Python codegen) ------------
   void register_erd_change_trigger(ErdChangeTrigger *trigger) { erd_change_triggers_.push_back(trigger); }
@@ -224,6 +249,10 @@ class GEAComponent : public uart::UARTDevice, public Component {
   void finish_pending_();
   bool response_matches_pending_(uint8_t response_cmd, uint8_t req_id) const;
   bool gea2_response_matches_pending_(uint8_t response_cmd, uint16_t erd) const;
+
+  // GEA2 collision avoidance (bus-idle gate) and detection (TX echo check)
+  bool gea2_bus_clear_() const;
+  bool consume_gea2_echo_byte_(uint8_t byte);
 
   // RX state machine
   void process_rx_byte_(uint8_t byte);
@@ -272,6 +301,33 @@ class GEAComponent : public uart::UARTDevice, public Component {
   PendingRequest pending_{};
   bool pending_active_{false};
 
+  // GEA2 collision handling (single-wire half-duplex bus — every node hears
+  // every byte, including its own transmissions).
+  //
+  // Avoidance: a transmission may only start after the line has been silent
+  // for GEA2_TX_IDLE_MS.  One byte at 19200 baud is ~0.52 ms, so 10 ms of
+  // silence places us well clear of other nodes' frames and inter-byte gaps.
+  static constexpr uint32_t GEA2_TX_IDLE_MS = 10;
+  // Detection: the wire image of our last transmission is kept and matched
+  // byte-for-byte against the bus echo.  If the echo never completes within
+  // this window, assume it never will (TX open / RX mute) and unwedge.
+  static constexpr uint32_t GEA2_ECHO_TIMEOUT_MS = 100;
+  // After a detected collision the pending request is retried after a short
+  // random backoff (min + [0, span)) instead of the full request timeout.
+  static constexpr uint32_t GEA2_COLLISION_BACKOFF_MIN_MS = 2;
+  static constexpr uint32_t GEA2_COLLISION_BACKOFF_SPAN_MS = 18;
+  std::vector<uint8_t> gea2_echo_buf_;  // expected echo (exact wire bytes)
+  size_t gea2_echo_idx_{0};             // match cursor into gea2_echo_buf_
+  uint32_t gea2_echo_at_ms_{0};         // when the frame was written (for the timeout)
+  // Runs loop() continuously while a GEA2 exchange is in flight so the echo
+  // matcher, backoff retries and the bus-idle gate react at millisecond
+  // resolution instead of the ~16 ms default loop interval.  Released as soon
+  // as the bus goes quiet, so the idle polling cadence costs nothing.
+  HighFrequencyLoopRequester high_freq_;
+  // Timestamp of the last byte seen on RX — any byte, framed or not. Drives
+  // the bus-idle gate; last_rx_ms_ can't, it only moves on valid packets.
+  uint32_t last_rx_byte_ms_{0};
+
   // Timestamp of the last successfully received packet (ms since boot, 0 = none).
   uint32_t last_rx_ms_{0};
 
@@ -290,6 +346,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   uint32_t crc_errors_{0};
   uint32_t tx_retries_{0};
   uint32_t dropped_requests_{0};
+  uint32_t tx_collisions_{0};
 
   // ERD discovery map: ERD address → most recently received data bytes.
   // Populated on first publication of each ERD; updated silently thereafter.
@@ -306,6 +363,26 @@ class GEAComponent : public uart::UARTDevice, public Component {
   bool poll_list_built_{false};
   void build_poll_list_();
   void poll_next_();
+
+  // GEA2 active address discovery — engaged when dest_address is omitted in YAML.
+  // We broadcast a read of a universal identity ERD; the appliance reveals its
+  // address in the SRC field of its response. On a multi-node bus more than one
+  // node may answer, so we collect distinct responders over a short window and
+  // only auto-adopt when exactly one replies (otherwise halt and ask the user).
+  static constexpr uint16_t GEA2_ADDR_PROBE_ERD = 0x0001;        // model number — present on every appliance
+  static constexpr uint32_t GEA2_ADDR_PROBE_WINDOW_MS = 500;     // collect responders this long after each probe
+  static constexpr uint32_t GEA2_ADDR_PROBE_COOLDOWN_MS = 1000;  // idle gap between probe rounds
+  static constexpr uint8_t GEA2_ADDR_PROBE_LOUD_ATTEMPTS = 5;    // throttle the "no response" warning after this many
+  bool dest_configured_{false};                                  // set_dest_address() was called from YAML
+  bool gea2_addr_discovery_{false};                              // actively probing the bus for the appliance address
+  bool addr_discovery_halted_{false};  // multiple responders — waiting for a manual dest_address
+  bool addr_probe_inflight_{false};    // a probe is out; collecting responders this round
+  uint32_t addr_probe_at_ms_{0};       // start of the current probe window / cooldown
+  uint32_t addr_probe_attempts_{0};
+  std::vector<uint8_t> addr_candidates_;  // distinct responder SRC addresses seen this round
+  void drive_gea2_addr_discovery_();
+  void send_gea2_addr_probe_();
+  void record_addr_candidate_(uint8_t src);
 
   // GEA2 ERD discovery (opt-in via gea2_discovery: true in YAML).
   // On first boot: scans GEA2_DISCOVERY_TABLE, saves responsive ERDs to NVS.

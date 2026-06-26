@@ -7,6 +7,7 @@
 #endif
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 
 namespace esphome {
 namespace gea {
@@ -172,9 +173,23 @@ void GEAComponent::send_packet_(uint8_t dest, const std::vector<uint8_t> &payloa
 
   auto escaped = escape_(inner);
 
-  write_byte(GEA_STX);
-  write_array(escaped.data(), escaped.size());
-  write_byte(GEA_ETX);
+  // Assemble the exact wire image (STX + escaped body + ETX) in one buffer so
+  // GEA2 can verify the bus echo against it byte-for-byte.
+  std::vector<uint8_t> frame;
+  frame.reserve(escaped.size() + 2);
+  frame.push_back(GEA_STX);
+  frame.insert(frame.end(), escaped.begin(), escaped.end());
+  frame.push_back(GEA_ETX);
+  write_array(frame.data(), frame.size());
+
+  if (protocol_ == Protocol::GEA2) {
+    // Single-wire bus: everything we send comes back on RX.  Keep the wire
+    // image so loop() can match the echo as it arrives — a mismatch means
+    // another node drove the line at the same time (collision).
+    gea2_echo_buf_ = std::move(frame);
+    gea2_echo_idx_ = 0;
+    gea2_echo_at_ms_ = millis();
+  }
 }
 
 uint8_t GEAComponent::next_req_id_() {
@@ -258,6 +273,52 @@ void GEAComponent::finish_pending_() {
   pending_.is_discovery = false;
 }
 
+// True when a GEA2 transmission may start: no frame is mid-reception, the
+// echo of our previous transmission has fully returned, and the line has been
+// silent for a few byte-times.  Immediate protocol responses (ACK) are exempt
+// — the peer expects them right after its frame.  GEA3 runs on a dedicated
+// full-duplex link, so there is no one to yield to.
+bool GEAComponent::gea2_bus_clear_() const {
+  if (protocol_ != Protocol::GEA2)
+    return true;
+  if (rx_state_ != RxState::IDLE || !gea2_echo_buf_.empty())
+    return false;
+  return last_rx_byte_ms_ == 0 || millis() - last_rx_byte_ms_ >= GEA2_TX_IDLE_MS;
+}
+
+// Match an incoming byte against the wire image of our last GEA2 transmission.
+// Returns true when the byte was our own echo (consumed, not fed to the
+// parser).  A mismatch means another node transmitted while we did — a
+// collision.  Both frames are garbled on the wire, so schedule a fast retry of
+// the pending request after a short random backoff (the randomness breaks
+// lockstep with the other node's own retry) instead of waiting out the full
+// request timeout.
+bool GEAComponent::consume_gea2_echo_byte_(uint8_t byte) {
+  if (gea2_echo_buf_.empty())
+    return false;
+  if (byte == gea2_echo_buf_[gea2_echo_idx_]) {
+    gea2_echo_idx_++;
+    if (gea2_echo_idx_ >= gea2_echo_buf_.size()) {
+      ESP_LOGV(TAG, "GEA2 TX echo verified (%zu bytes)", gea2_echo_buf_.size());
+      gea2_echo_buf_.clear();
+      gea2_echo_idx_ = 0;
+    }
+    return true;
+  }
+  tx_collisions_++;
+  ESP_LOGD(TAG, "GEA2 collision: echo byte %zu read 0x%02X, sent 0x%02X — scheduling fast retry", gea2_echo_idx_, byte,
+           gea2_echo_buf_[gea2_echo_idx_]);
+  gea2_echo_buf_.clear();
+  gea2_echo_idx_ = 0;
+  if (pending_active_) {
+    // Backdate the send timestamp so the regular timeout machinery fires
+    // after the backoff rather than after the full REQUEST_TIMEOUT_MS.
+    uint32_t backoff = GEA2_COLLISION_BACKOFF_MIN_MS + (random_uint32() % GEA2_COLLISION_BACKOFF_SPAN_MS);
+    pending_.sent_at_ms = millis() - REQUEST_TIMEOUT_MS + backoff;
+  }
+  return false;  // garbled byte — let the parser see it and resync on STX
+}
+
 // Returns true if an incoming response's command and request ID match the
 // request currently in flight.  Used by response handlers to filter stray or
 // duplicated packets.
@@ -293,15 +354,23 @@ void GEAComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up GEA component (protocol=%s)...", protocol_ == Protocol::GEA2 ? "GEA2" : "GEA3");
   rx_buf_.reserve(64);
   if (protocol_ == Protocol::GEA2) {
-    // GEA2 has no subscribe-all and no spontaneous publications. The Python
-    // schema enforces dest_address is set, so auto_detect_ is irrelevant here.
+    // GEA2 has no subscribe-all and no spontaneous publications, so the GEA3
+    // passive auto-detect can't apply here.
     auto_detect_ = false;
-    ESP_LOGI(TAG, "GEA2 mode — values will be polled (interval=%u ms)", poll_interval_ms_);
-    last_poll_ms_ = millis();
+    if (!dest_configured_) {
+      // No dest_address in YAML — actively probe the bus to find the appliance
+      // address before any polling. See drive_gea2_addr_discovery_().
+      gea2_addr_discovery_ = true;
+      dest_addr_ = GEA_BROADCAST_ADDR;
+      ESP_LOGI(TAG, "GEA2 mode — dest_address not set; probing the bus to discover the appliance address");
+    } else {
+      ESP_LOGI(TAG, "GEA2 mode — values will be polled (interval=%u ms)", poll_interval_ms_);
+      last_poll_ms_ = millis();
 #ifdef GEA_GEA2_DISCOVERY
-    if (gea2_discovery_)
-      discovery_init_();
+      if (gea2_discovery_)
+        discovery_init_();
 #endif
+    }
   } else {
     if (auto_detect_) {
       ESP_LOGI(TAG, "Address auto-detect enabled — sending subscribe-all to broadcast");
@@ -315,7 +384,10 @@ void GEAComponent::setup() {
 void GEAComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "GEA Component:");
   ESP_LOGCONFIG(TAG, "  Protocol: %s", protocol_ == Protocol::GEA2 ? "GEA2" : "GEA3");
-  if (auto_detect_) {
+  if (gea2_addr_discovery_) {
+    ESP_LOGCONFIG(TAG, "  Dest address: discovering on the bus%s",
+                  addr_discovery_halted_ ? " (halted — set dest_address)" : "…");
+  } else if (auto_detect_) {
     ESP_LOGCONFIG(TAG, "  Dest address: auto-detect (current: 0x%02X)", dest_addr_);
   } else {
     ESP_LOGCONFIG(TAG, "  Dest address: 0x%02X", dest_addr_);
@@ -448,6 +520,23 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
 }
 #endif  // GEA_ERD_LOOKUP
 
+// Log the appliance address and how it was determined. The address is also
+// printed once at boot, but that scrolls away before a network client connects —
+// wire this to api: on_client_connected to see it on demand.
+void GEAComponent::log_address() const {
+  if (gea2_addr_discovery_) {
+    ESP_LOGI(TAG, "Appliance address: unresolved — %s",
+             addr_discovery_halted_ ? "discovery halted, set dest_address manually" : "discovering on the bus");
+  } else if (dest_configured_) {
+    ESP_LOGI(TAG, "Appliance address: 0x%02X (configured)", dest_addr_);
+  } else if (auto_detect_) {
+    ESP_LOGI(TAG, "Appliance address: auto-detecting (no packet received yet)");
+  } else {
+    ESP_LOGI(TAG, "Appliance address: 0x%02X (%s)", dest_addr_,
+             protocol_ == Protocol::GEA2 ? "auto-discovered" : "auto-detected");
+  }
+}
+
 void GEAComponent::log_erds() const {
 #ifdef GEA_GEA2_DISCOVERY
   if (gea2_discovery_) {
@@ -493,24 +582,50 @@ void GEAComponent::log_erds() const {
 }
 
 void GEAComponent::loop() {
-  // Drain all available RX bytes through the state machine.
+  // Drain all available RX bytes.  On GEA2 the echo of our own transmission
+  // is verified and consumed first; everything else goes through the frame
+  // parser.  Every byte — echo or not — marks the line as busy for the
+  // bus-idle TX gate.
   uint8_t byte;
   while (available()) {
     if (!read_byte(&byte))
       break;
     rx_byte_count_++;
+    last_rx_byte_ms_ = millis();
+    if (consume_gea2_echo_byte_(byte))
+      continue;
     process_rx_byte_(byte);
+  }
+
+  // An echo that never completes (neither matched nor mismatched) means our
+  // TX never reached the wire or RX is mute — don't let it wedge the bus-clear
+  // gate forever.
+  if (!gea2_echo_buf_.empty() && millis() - gea2_echo_at_ms_ >= GEA2_ECHO_TIMEOUT_MS) {
+    ESP_LOGW(TAG, "GEA2 TX echo missing (%zu/%zu bytes seen) — check the TX/RX wiring", gea2_echo_idx_,
+             gea2_echo_buf_.size());
+    gea2_echo_buf_.clear();
+    gea2_echo_idx_ = 0;
   }
 
   // Log RX stats every 10 s so we can confirm the UART is receiving at all.
   uint32_t now_stats = millis();
   if (now_stats - last_stats_ms_ >= 10000) {
     last_stats_ms_ = now_stats;
-    ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s", rx_byte_count_,
-             is_bus_connected() ? "CONNECTED" : "no valid packets yet");
+    if (protocol_ == Protocol::GEA2) {
+      ESP_LOGD(TAG, "RX stats: %u bytes total, %u TX collisions, bus %s", rx_byte_count_, tx_collisions_,
+               is_bus_connected() ? "CONNECTED" : "no valid packets yet");
+    } else {
+      ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s", rx_byte_count_,
+               is_bus_connected() ? "CONNECTED" : "no valid packets yet");
+    }
   }
 
   if (protocol_ == Protocol::GEA2) {
+    if (gea2_addr_discovery_) {
+      // Resolve the appliance address first; skip polling until it's known.
+      drive_gea2_addr_discovery_();
+      return;
+    }
 #ifdef GEA_GEA2_DISCOVERY
     if (gea2_discovery_ && discovery_state_ == DiscoveryState::SCANNING) {
       // During discovery: enqueue one read at a time with no inter-read delay.
@@ -569,16 +684,20 @@ void GEAComponent::loop() {
 
   // Request queue: retry pending on timeout, or promote the next queued
   // request when idle.  Only one request is in flight at a time so request_id
-  // matching on the response is unambiguous.
+  // matching on the response is unambiguous.  On GEA2 both transmit paths
+  // additionally wait for the bus to be clear (collision avoidance); a busy
+  // line just defers to a later loop() pass.
   uint32_t now_req = millis();
   if (pending_active_) {
     if (now_req - pending_.sent_at_ms >= REQUEST_TIMEOUT_MS) {
       if (pending_.retries_left > 0) {
-        pending_.retries_left--;
-        tx_retries_++;
-        ESP_LOGD(TAG, "Request cmd=0x%02X id=0x%02X timed out, retrying (%u left)", pending_.cmd, pending_.req_id,
-                 pending_.retries_left);
-        transmit_pending_();
+        if (gea2_bus_clear_()) {
+          pending_.retries_left--;
+          tx_retries_++;
+          ESP_LOGD(TAG, "Request cmd=0x%02X id=0x%02X timed out, retrying (%u left)", pending_.cmd, pending_.req_id,
+                   pending_.retries_left);
+          transmit_pending_();
+        }
       } else {
         if (pending_.is_discovery) {
 #ifdef GEA_GEA2_DISCOVERY
@@ -592,11 +711,21 @@ void GEAComponent::loop() {
       }
     }
   }
-  if (!pending_active_ && !request_queue_.empty()) {
+  if (!pending_active_ && !request_queue_.empty() && gea2_bus_clear_()) {
     pending_ = std::move(request_queue_.front());
     request_queue_.pop_front();
     pending_active_ = true;
     transmit_pending_();
+  }
+
+  // While a GEA2 exchange is in flight, ask the scheduler to run loop()
+  // continuously (see high_freq_ in gea.h).  start()/stop() are idempotent.
+  if (protocol_ == Protocol::GEA2) {
+    if (pending_active_ || !gea2_echo_buf_.empty()) {
+      high_freq_.start();
+    } else {
+      high_freq_.stop();
+    }
   }
 }
 
@@ -705,6 +834,93 @@ void GEAComponent::poll_next_() {
 }
 
 // =============================================================================
+// GEAComponent — GEA2 active address discovery
+// =============================================================================
+
+// Broadcast a GEA2 read of a universal identity ERD. Whichever node answers
+// reveals its address in the SRC field of its response (captured in
+// process_packet_ via record_addr_candidate_).
+void GEAComponent::send_gea2_addr_probe_() {
+  std::vector<uint8_t> payload = {CMD_GEA2_READ, 0x01, (uint8_t)(GEA2_ADDR_PROBE_ERD >> 8),
+                                  (uint8_t)(GEA2_ADDR_PROBE_ERD & 0xFF)};
+  send_packet_(GEA_BROADCAST_ADDR, payload);
+  ESP_LOGD(TAG, "GEA2 address probe: broadcast read of ERD 0x%04X", GEA2_ADDR_PROBE_ERD);
+}
+
+// Record a distinct responder address seen during the current probe window.
+void GEAComponent::record_addr_candidate_(uint8_t src) {
+  for (uint8_t a : addr_candidates_) {
+    if (a == src)
+      return;
+  }
+  addr_candidates_.push_back(src);
+  ESP_LOGD(TAG, "GEA2 address probe: response from 0x%02X", src);
+}
+
+// Drive the probe/collect/evaluate cycle. Called from loop() while
+// gea2_addr_discovery_ is set; returns the component to normal operation once a
+// single appliance is found, or halts on an ambiguous (multi-responder) bus.
+void GEAComponent::drive_gea2_addr_discovery_() {
+  if (addr_discovery_halted_)
+    return;  // ambiguous result — idle until the user sets dest_address and reflashes
+
+  uint32_t now = millis();
+
+  if (!addr_probe_inflight_) {
+    // Wait out the cooldown between rounds, then start a fresh probe.
+    if (now - addr_probe_at_ms_ < GEA2_ADDR_PROBE_COOLDOWN_MS)
+      return;
+    if (!gea2_bus_clear_())
+      return;  // yield to ongoing traffic; probe on a later pass
+    addr_candidates_.clear();
+    send_gea2_addr_probe_();
+    addr_probe_inflight_ = true;
+    addr_probe_at_ms_ = now;
+    return;
+  }
+
+  // Probe is out — keep collecting responders until the window closes.
+  if (now - addr_probe_at_ms_ < GEA2_ADDR_PROBE_WINDOW_MS)
+    return;
+
+  addr_probe_inflight_ = false;
+  addr_probe_at_ms_ = now;  // start the cooldown before the next round
+  addr_probe_attempts_++;
+
+  if (addr_candidates_.size() == 1) {
+    dest_addr_ = addr_candidates_[0];
+    gea2_addr_discovery_ = false;
+    ESP_LOGI(TAG, "GEA2 address discovery: appliance found at 0x%02X (after %u probe(s))", dest_addr_,
+             (unsigned)addr_probe_attempts_);
+    ESP_LOGI(TAG, "  Pin it with 'dest_address: 0x%02X' in YAML to skip discovery on future boots.", dest_addr_);
+    last_poll_ms_ = millis();
+#ifdef GEA_GEA2_DISCOVERY
+    if (gea2_discovery_)
+      discovery_init_();
+#endif
+  } else if (addr_candidates_.empty()) {
+    bool loud = addr_probe_attempts_ <= GEA2_ADDR_PROBE_LOUD_ATTEMPTS || (addr_probe_attempts_ % 30 == 0);
+    if (loud)
+      ESP_LOGW(TAG,
+               "GEA2 address discovery: no appliance answered the broadcast probe (attempt %u). Retrying… "
+               "If this persists, check power/wiring or set 'dest_address' manually.",
+               (unsigned)addr_probe_attempts_);
+  } else {
+    std::string list;
+    char buf[8];
+    for (uint8_t a : addr_candidates_) {
+      snprintf(buf, sizeof(buf), "0x%02X ", a);
+      list += buf;
+    }
+    ESP_LOGE(TAG,
+             "GEA2 address discovery: %zu nodes answered (%s)— ambiguous on a multi-node bus. "
+             "Set 'dest_address' to the one you want and reflash.",
+             addr_candidates_.size(), list.c_str());
+    addr_discovery_halted_ = true;
+  }
+}
+
+// =============================================================================
 // GEAComponent — RX state machine
 // =============================================================================
 
@@ -764,6 +980,18 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
 
   ESP_LOGV(TAG, "RX frame: dest=0x%02X src=0x%02X len=%zu", dest, src, pkt.size());
 
+  // On the half-duplex GEA2 bus, everything we transmit is echoed back on RX.
+  // The echo is normally consumed byte-by-byte upstream (consume_gea2_echo_byte_,
+  // which doubles as collision detection), so this SRC check is a fallback for
+  // echo bytes that slip through — e.g. after an echo timeout.  A frame whose
+  // SRC is our own address is never a genuine inbound message, so drop it
+  // before the generic dest filter: otherwise broadcast probes (dest=0xFF)
+  // re-enter as phantom packets, and the echo masquerades as foreign traffic.
+  if (src == src_addr_) {
+    ESP_LOGV(TAG, "RX: self-echo (TX loopback) from 0x%02X, dropping", src);
+    return;
+  }
+
   // Filter packets not addressed to us (or broadcast).
   if (dest != src_addr_ && dest != GEA_BROADCAST_ADDR) {
     ESP_LOGD(TAG, "Ignoring packet for 0x%02X (we are 0x%02X)", dest, src_addr_);
@@ -788,6 +1016,12 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
   // Packet is valid — acknowledge it and record receive time (used by is_bus_connected()).
   send_ack_();
   last_rx_ms_ = millis();
+
+  // GEA2 active address discovery: any valid frame from a real node (the
+  // self-echo and broadcast cases are already excluded above) is a candidate
+  // appliance address. drive_gea2_addr_discovery_() evaluates the collected set.
+  if (gea2_addr_discovery_)
+    record_addr_candidate_(src);
 
   // Auto-detect: lock onto the source address of the first valid packet.
   if (auto_detect_ && src != GEA_BROADCAST_ADDR && src != src_addr_) {

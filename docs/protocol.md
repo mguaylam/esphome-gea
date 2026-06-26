@@ -111,7 +111,9 @@ sequenceDiagram
 
 GEA2 has no subscriptions, so the hub polls each declared ERD in turn. Since
 the bus is half-duplex the hub also sees its own transmission echoed back —
-those echoes are filtered out by checking the `dest` field.
+that echo is consumed byte-by-byte as collision detection (see
+[Collision handling](#collision-handling-gea2)), with a source-address check
+as fallback for anything that slips through.
 
 ```mermaid
 sequenceDiagram
@@ -229,37 +231,51 @@ byte is compared against what comes back on RX, and a mismatch triggers an
 immediate abort + pseudo-random backoff (≈43–106 ms, derived from the
 node's address).
 
-**What this component does today:**
+**What this component does:**
 
-- The bus self-echo is filtered out by checking the `dest` field against
-  our own `src_address` — packets we sent ourselves are discarded before
-  parsing.
-- We do **not** verify the echo byte-by-byte and we do **not** implement
-  the backoff FSM.
-- If a collision corrupts our request, we recover via the standard
-  request-reliability path (250 ms timeout × 10 retries — see below).
+- **Collision avoidance** — a request (initial send, retry, or
+  address-discovery probe) only goes on the wire when the bus is clear: no
+  frame mid-reception, no echo of our own transmission still outstanding,
+  and ≥10 ms of line silence (~19 byte-times at 19200 baud). Immediate ACK
+  responses are exempt — the peer expects them right after its frame.
+- **Collision detection** — the exact wire image of every transmission is
+  kept and compared byte-for-byte against the bus echo as it returns. A
+  mismatch means another node drove the line at the same time; the pending
+  request is resent after a short random backoff (2–19 ms) instead of
+  waiting out the full 250 ms timeout. Detected collisions are counted
+  (`get_tx_collisions()` — see [Diagnostics](diagnostics.md)) and included
+  in the periodic RX stats log line.
+- **Millisecond responsiveness** — while an exchange is in flight the
+  component holds ESPHome's high-frequency loop request, so the idle gate,
+  echo matcher and backoff retry run at millisecond resolution instead of
+  the ~16 ms default loop interval. The request is released as soon as the
+  bus goes quiet, so idle polling costs nothing.
+- **Wiring diagnostics** — an echo that never returns is flagged with a
+  WARNING after 100 ms (TX not reaching the bus, or RX not hearing it)
+  instead of looking like an ordinary response timeout.
 
-**Why it works in practice:**
+**What it still doesn't do, and why:**
 
-The other nodes on the bus run `tiny-gea-api` (or equivalent) and **do**
-detect collisions on their side, so they back off and retransmit within
-~50 ms. We notice the missing response 250 ms later and retry. Both sides
-eventually converge — at the cost of slightly higher latency on our end
-during a collision.
+- **No mid-frame abort.** The frame is committed to the UART FIFO as a
+  whole, so by the time an echo mismatch is observed the frame is already
+  on the wire. The reference firmware transmits byte-by-byte and aborts on
+  the first divergent byte, but doing that here would mean busy-waiting
+  between bytes (blocking ESPHome's cooperative loop for the frame
+  duration) or a custom ISR behind the `uart` component's back. Recovery is
+  a fast retry of the whole frame instead — at 19200 baud a frame is
+  5–20 ms, so the difference is small.
+- **A small race window remains.** The bus-clear check runs in `loop()`, so
+  another node can still start transmitting between the check and the
+  write. The high-frequency loop shrinks that window to roughly millisecond
+  scale but cannot close it; a collision in the window is caught by echo
+  verification and retried.
 
-**What we lose by not implementing byte-level CD:**
-
-- Slower recovery after a collision (250 ms timeout vs ~50 ms backoff).
-- We can briefly corrupt another node's in-flight frame before its CD
-  catches it, forcing it to retransmit. No data loss, just bus noise.
-- Less informative diagnostics on hardware faults: a missing echo today
-  looks the same as a missing response (timeout + retry), whereas
-  byte-level CD would flag wiring/power issues immediately.
-
-This is a known and intentional trade-off — see
+The other nodes on the bus run `tiny-gea-api` (or equivalent) and detect
+collisions on their side too, so after a collision both parties back off
+and converge. See
 [Discussion #3](https://github.com/mguaylam/esphome-gea/discussions/3) for
-field reports and the conditions under which a byte-level CD implementation
-might be worth the added complexity.
+field reports, including what the `TX collisions` counter does on real
+buses.
 
 ## Request reliability
 
@@ -283,8 +299,9 @@ single-in-flight queue with deterministic retry:
   - **GEA3**: incoming responses whose `request_id` doesn't match the
     pending request are ignored.
   - **GEA2**: incoming responses whose ERD doesn't match the pending request
-    are ignored. Self-echoes on the half-duplex bus are filtered earlier by
-    the `dest` check, so they never reach this stage.
+    are ignored. Self-echoes on the half-duplex bus are consumed earlier by
+    the echo matcher (or dropped by the source-address fallback), so they
+    never reach this stage.
 - **Unsolicited frames bypass the queue** — ACKs, publications, publication
   ACKs, and subscription host startup packets are not request/response pairs
   and are processed independently. (GEA2 has none of these.)
