@@ -156,6 +156,15 @@ struct PendingRequest {
   bool is_discovery{false};
 };
 
+// One entry in the GEA2 poll schedule. Each polled ERD carries its own refresh
+// target (interval_ms) — the per-ERD override if configured, otherwise the
+// hub-wide default — and the timestamp of its last issued read (last_poll_ms).
+struct Gea2PollEntry {
+  uint16_t erd;
+  uint32_t interval_ms;
+  uint32_t last_poll_ms;
+};
+
 // ---------------------------------------------------------------------------
 // GEAComponent — the hub component; owns UART, discovery, and subscription
 // ---------------------------------------------------------------------------
@@ -177,6 +186,9 @@ class GEAComponent : public uart::UARTDevice, public Component {
   void set_src_address(uint8_t addr) { src_addr_ = addr; }
   void set_protocol(Protocol p) { protocol_ = p; }
   void set_poll_interval(uint32_t ms) { poll_interval_ms_ = ms; }
+  // Per-ERD poll interval override (GEA2). ERDs without an override fall back to
+  // the hub-wide poll_interval. See poll_overrides_ / build_poll_list_().
+  void add_poll_override(uint16_t erd, uint32_t interval_ms) { poll_overrides_[erd] = interval_ms; }
   void set_gea2_discovery(bool enabled) { gea2_discovery_ = enabled; }
 
   // ---- Child entity registration ------------------------------------------
@@ -355,14 +367,24 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // User-configured on_erd_change triggers (see gea.on_erd_change in YAML).
   std::vector<ErdChangeTrigger *> erd_change_triggers_;
 
-  // GEA2 round-robin poller: built lazily on first poll from registered
-  // entities and on_erd_change triggers (deduplicated). Empty in GEA3 mode.
-  std::vector<uint16_t> poll_erds_;
-  size_t poll_index_{0};
-  uint32_t last_poll_ms_{0};
+  // GEA2 per-ERD poller: built lazily on first poll from registered entities
+  // and on_erd_change triggers (deduplicated). Each ERD refreshes at its own
+  // interval (override or the hub-wide default); poll_next_() serves the most
+  // overdue due ERD, which is starvation-free. Empty in GEA3 mode.
+  std::vector<Gea2PollEntry> poll_erds_;
+  std::map<uint16_t, uint32_t> poll_overrides_;  // erd -> interval_ms (from YAML)
   bool poll_list_built_{false};
   void build_poll_list_();
+  void add_poll_erd_(uint16_t erd);
   void poll_next_();
+  // Estimated bus time of one GEA2 read-and-response (~30-40 ms at 19200 baud).
+  // Used as the cost basis for the bus-occupancy estimate and the floor below
+  // which a per-ERD interval cannot be met. Keep in sync with GEA2_READ_FLOOR_MS
+  // in __init__.py.
+  static constexpr uint32_t GEA2_POLL_COST_MS = 35;
+  // Bus-busy time accumulated over the current stats window (successful GEA2
+  // read/write round-trips), used to report measured bus occupancy.
+  uint32_t gea2_busy_ms_{0};
 
   // GEA2 active address discovery — engaged when dest_address is omitted in YAML.
   // We broadcast a read of a universal identity ERD; the appliance reveals its
