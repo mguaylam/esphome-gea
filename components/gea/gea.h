@@ -123,6 +123,14 @@ class GEAEntity {
   // Used by writable entities (select, number) to convert a value back to ERD bytes.
   void encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const;
 
+  // Write value_bytes into the write ERD starting at byte_offset_, preserving the
+  // ERD's other bytes via read-modify-write against the hub's cached payload. This
+  // lets several entities share one multi-byte ERD (e.g. one switch per ice maker on
+  // 0x100A) without clobbering each other's bytes. At a non-zero offset with nothing
+  // cached yet the write is skipped (we can't preserve unknown bytes); at offset 0
+  // with no cache it falls back to writing value_bytes as the whole ERD.
+  void write_value_at_offset_(const std::vector<uint8_t> &value_bytes) const;
+
  public:
   // Common ERD info dump shared by every entity's dump_config().
   void dump_erd_config(const char *tag) const {
@@ -184,6 +192,23 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // ---- Called by writable entities (select, number, etc.) -----------------
   void write_erd(uint16_t erd, const std::vector<uint8_t> &data);
+
+  // Last full payload received for erd, or nullptr if none has been seen yet.
+  // Used by writable entities for read-modify-write into multi-byte ERDs.
+  const std::vector<uint8_t> *get_cached_erd(uint16_t erd) const {
+    auto it = discovered_erds_.find(erd);
+    return it == discovered_erds_.end() ? nullptr : &it->second;
+  }
+
+  // Optimistically overwrite the cached payload for an already-known ERD so a second
+  // entity on the same ERD read-modify-writes against the just-written value, even
+  // before the post-write re-read (GEA2) or publication (GEA3) lands. No-op if the
+  // ERD has never been received, so it never creates a blind or partial baseline.
+  void prime_erd_cache(uint16_t erd, const std::vector<uint8_t> &data) {
+    auto it = discovered_erds_.find(erd);
+    if (it != discovered_erds_.end())
+      it->second = data;
+  }
 
   // ---- Explicit read — enqueues a single ERD read request -----------------
   void read_erd(uint16_t erd);

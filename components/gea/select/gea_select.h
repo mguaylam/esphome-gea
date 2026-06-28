@@ -40,8 +40,7 @@ class GEASelect : public select::Select, public GEAEntity, public Component {
       if (pair.second == value) {
         std::vector<uint8_t> data;
         encode_to_bytes(pair.first, data);
-        if (parent_)
-          parent_->write_erd(get_write_erd(), data);
+        write_value_at_offset_(data);
         publish_state(value);
         return;
       }

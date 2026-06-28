@@ -105,6 +105,41 @@ void GEAEntity::encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const {
   }
 }
 
+void GEAEntity::write_value_at_offset_(const std::vector<uint8_t> &value_bytes) const {
+  if (parent_ == nullptr)
+    return;
+  const uint16_t erd = get_write_erd();
+  const uint8_t off = byte_offset_;
+
+  const std::vector<uint8_t> *cached = parent_->get_cached_erd(erd);
+  if (cached == nullptr) {
+    if (off != 0) {
+      // Partial write into a payload we've never read — we can't know the other
+      // bytes, so refuse rather than zero-fill and clobber them. The cache fills
+      // in within a poll cycle (GEA2) or on the next publication (GEA3).
+      ESP_LOGW(TAG,
+               "Write to ERD 0x%04X at offset %u skipped: value not read yet, "
+               "can't preserve the other bytes",
+               erd, off);
+      return;
+    }
+    // Offset 0 and nothing cached: keep the historical behaviour of writing the
+    // encoded value as the entire ERD.
+    parent_->write_erd(erd, value_bytes);
+    return;
+  }
+
+  // Read-modify-write: start from the last full payload, overlay our bytes.
+  std::vector<uint8_t> buf = *cached;
+  if ((size_t)off + value_bytes.size() > buf.size())
+    buf.resize((size_t)off + value_bytes.size(), 0);
+  for (size_t i = 0; i < value_bytes.size(); i++)
+    buf[(size_t)off + i] = value_bytes[i];
+
+  parent_->prime_erd_cache(erd, buf);
+  parent_->write_erd(erd, buf);
+}
+
 // =============================================================================
 // GEAComponent — protocol utilities
 // =============================================================================
