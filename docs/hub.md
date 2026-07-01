@@ -59,10 +59,11 @@ gea:
 - **dest_address** (*Optional*, hex byte): The address of the appliance.
   - On **GEA3** the hub auto-detects it from the first valid packet.
   - On **GEA2** there is no spontaneous traffic, so if you omit `dest_address`
-    the hub *actively discovers* it at boot: it broadcasts a read of a universal
-    identity ERD (`0x0001`, model number) and adopts the address of whichever
-    node replies, logging it at `INFO`. If **exactly one** appliance answers it
-    is adopted automatically; if **several** answer (a multi-node bus) the hub
+    the hub *actively discovers* it at boot: it broadcasts a read of the
+    appliance-type ERD (`0x0008`, which only the main control board answers) and
+    adopts the address of whichever node replies, logging it at `INFO`. If
+    **exactly one** appliance answers it is adopted automatically; if
+    **several** answer (a multi-node bus) the hub
     halts and asks you to pick one. Pinning `dest_address: 0xC0` explicitly skips
     this probe on every boot — recommended once you know the value. Typical
     value: `0xC0`.
