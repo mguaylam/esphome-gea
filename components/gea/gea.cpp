@@ -1052,11 +1052,20 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
   send_ack_();
   last_rx_ms_ = millis();
 
-  // GEA2 active address discovery: any valid frame from a real node (the
-  // self-echo and broadcast cases are already excluded above) is a candidate
-  // appliance address. drive_gea2_addr_discovery_() evaluates the collected set.
-  if (gea2_addr_discovery_)
-    record_addr_candidate_(src);
+  // GEA2 active address discovery: only a genuine read response to our
+  // appliance-type probe (ERD 0x0008) identifies the main control board.
+  // Recording the SRC of *any* valid frame would also pick up unrelated
+  // inter-board traffic that a multi-node bus (dishwashers, heat-pump water
+  // heaters) carries during the collection window, making the bus look
+  // ambiguous and stalling discovery. Match the probe response explicitly: it
+  // arrives as CMD_GEA2_READ (0xF0) carrying our probe ERD in bytes 5..6. The
+  // self-echo of our own request is already dropped above, so src is a real
+  // responder. drive_gea2_addr_discovery_() evaluates the collected set.
+  if (gea2_addr_discovery_ && pkt.size() >= 7 && pkt[3] == CMD_GEA2_READ) {
+    uint16_t probed_erd = (uint16_t)pkt[5] << 8 | pkt[6];
+    if (probed_erd == GEA2_ADDR_PROBE_ERD)
+      record_addr_candidate_(src);
+  }
 
   // Auto-detect: lock onto the source address of the first valid packet.
   if (auto_detect_ && src != GEA_BROADCAST_ADDR && src != src_addr_) {
