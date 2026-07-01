@@ -20,6 +20,11 @@ gea:
   src_address: 0xBB
   dest_address: 0xC0
   poll_interval: 3s
+  poll_overrides:
+    - erd: 0x0001
+      interval: 500ms
+    - erd: 0x2154
+      interval: 250ms
   on_erd_change:
     - erd: 0x2154
       byte_offset: 1
