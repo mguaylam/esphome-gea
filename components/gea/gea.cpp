@@ -664,9 +664,16 @@ void GEAComponent::loop() {
 #ifdef GEA_GEA2_DISCOVERY
     if (gea2_discovery_ && discovery_state_ == DiscoveryState::SCANNING) {
       // During discovery: enqueue one read at a time with no inter-read delay.
-      // Only fire when the queue and pending slot are both clear.
-      if (!pending_active_ && request_queue_.empty())
-        discovery_enqueue_next_();
+      // Only fire when the queue and pending slot are both clear. Gate scan
+      // progress on bus liveness — while the bus is quiet, probe instead of
+      // advancing, so a dead bus never burns through the table or persists an
+      // empty result.
+      if (!pending_active_ && request_queue_.empty()) {
+        if (is_bus_connected())
+          discovery_enqueue_next_();
+        else
+          discovery_probe_bus_();
+      }
     } else {
 #endif
       // Normal round-robin polling of declared entities.
@@ -1357,7 +1364,8 @@ void GEAComponent::discovery_init_() {
       ESP_LOGI(TAG, "GEA2 discovery: resuming at %zu / %zu (%zu found so far)", discovery_index_,
                GEA2_DISCOVERY_TABLE_SIZE, discovery_found_erds_.size());
     } else {
-      ESP_LOGI(TAG, "GEA2 discovery: starting full scan (%zu ERDs) — this takes ~20-30 min", GEA2_DISCOVERY_TABLE_SIZE);
+      ESP_LOGI(TAG, "GEA2 discovery: armed for a full scan (%zu ERDs, ~20-30 min) — starts once the bus responds",
+               GEA2_DISCOVERY_TABLE_SIZE);
     }
   }
 }
@@ -1379,6 +1387,28 @@ void GEAComponent::discovery_enqueue_next_() {
   req.sent_at_ms = 0;
   req.is_discovery = true;
   request_queue_.push_back(std::move(req));
+}
+
+// Liveness probe used while the bus looks quiet: a throttled plain read of a
+// universal ERD. It is NOT flagged is_discovery, so its response is handled as
+// an ordinary read (refreshing is_bus_connected()) and never touches the scan
+// bitmap. Once it answers, the loop resumes advancing the scan.
+void GEAComponent::discovery_probe_bus_() {
+  uint32_t now = millis();
+  if (now - discovery_probe_ms_ < DISCOVERY_PROBE_INTERVAL_MS)
+    return;
+  discovery_probe_ms_ = now;
+  std::vector<uint8_t> body = {0x01, (uint8_t)(GEA2_LIVENESS_ERD >> 8), (uint8_t)(GEA2_LIVENESS_ERD & 0xFF)};
+  PendingRequest req;
+  req.cmd = CMD_GEA2_READ;
+  req.req_id = next_req_id_();
+  req.dest = dest_addr_;
+  req.body = std::move(body);
+  req.retries_left = 0;      // single attempt; the throttle re-issues
+  req.is_discovery = false;  // ordinary read — must not mark the scan bitmap
+  req.sent_at_ms = 0;
+  request_queue_.push_back(std::move(req));
+  ESP_LOGD(TAG, "GEA2 discovery: bus quiet — liveness probe of ERD 0x%04X", GEA2_LIVENESS_ERD);
 }
 
 void GEAComponent::discovery_on_response_(uint16_t erd) {
