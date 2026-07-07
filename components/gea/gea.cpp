@@ -241,9 +241,9 @@ void GEAComponent::send_ack_() {
 
 // Send a framed publication acknowledgement: [CMD_PUB_ACK][context][request_id].
 // The context and request_id must echo the values from the publication header.
-void GEAComponent::send_pub_ack_(uint8_t context, uint8_t request_id) {
+void GEAComponent::send_pub_ack_(uint8_t dest, uint8_t context, uint8_t request_id) {
   std::vector<uint8_t> payload = {CMD_PUB_ACK, context, request_id};
-  send_packet_(dest_addr_, payload);
+  send_packet_(dest, payload);
 }
 
 // Trigger ERD discovery: the appliance responds with a publication (0xA6) for
@@ -1258,7 +1258,7 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
         log_discovery_(erd, data);
         dispatch_erd_(erd, data);
       }
-      send_pub_ack_(context, pub_req_id);
+      send_pub_ack_(src, context, pub_req_id);
       break;
     }
 
