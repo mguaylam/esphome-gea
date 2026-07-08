@@ -264,7 +264,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   void send_packet_(uint8_t dest, const std::vector<uint8_t> &payload);
   void send_ack_();
   void send_subscribe_all_(uint8_t type = 0x00);
-  void send_pub_ack_(uint8_t context, uint8_t request_id);
+  void send_pub_ack_(uint8_t dest, uint8_t context, uint8_t request_id);
 
   // Request queue / retry machinery
   uint8_t next_req_id_();
