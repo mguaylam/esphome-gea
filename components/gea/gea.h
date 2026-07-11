@@ -75,6 +75,7 @@ enum GeaDecodeType {
   BOOL,
   RAW,
   ASCII,
+  GEA_ASCII,
 };
 
 class GEAComponent;

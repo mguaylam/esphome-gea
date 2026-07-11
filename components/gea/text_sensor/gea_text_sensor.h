@@ -22,7 +22,22 @@ class GEATextSensor : public text_sensor::TextSensor, public GEAEntity, public C
       while (len > 0 && data[len - 1] == 0x00)
         len--;
       publish_state(std::string(data.begin(), data.begin() + len));
-    } else if (!options_.empty()) {
+    } else if (decode_ == GeaDecodeType::GEA_ASCII) {
+    // GE length-prefixed ASCII string.
+    if (data.empty()) {
+      publish_state("");
+    return;
+    }
+
+    size_t len = data[0];
+
+    // Prevent reading past the received payload.
+    if (len > data.size() - 1)
+    len = data.size() - 1;
+
+  publish_state(std::string(data.begin() + 1,
+                            data.begin() + 1 + len));
+      } else if (!options_.empty()) {
       // Decode as number, look up in options map
       auto key = (uint32_t)decode_as_float(data);
       auto it = options_.find(key);
