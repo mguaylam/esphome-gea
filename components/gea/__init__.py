@@ -203,6 +203,7 @@ DECODE_TYPES = {
     "bool":      GeaDecodeType.BOOL,
     "raw":       GeaDecodeType.RAW,
     "ascii":     GeaDecodeType.ASCII,
+    "gea_ascii": GeaDecodeType.GEA_ASCII,
 }
 
 
