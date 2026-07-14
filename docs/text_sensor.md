@@ -42,7 +42,8 @@ text_sensor:
     fixed-size null-padded (trailing nulls are trimmed), and length-prefixed
     (a leading count byte, as some appliances use for model/serial numbers —
     detected when the first byte is a control character announcing exactly
-    the number of remaining bytes, and stripped).
+    the number of remaining bytes once trailing null padding is ignored, and
+    stripped).
   - `raw` — hex string like `0x0100AABB` (good for discovery).
   - One of the numeric decode types (e.g. `uint8`) when paired with `options`.
   Defaults to `raw`.

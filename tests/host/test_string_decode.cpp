@@ -30,6 +30,13 @@ int main() {
   std::vector<uint8_t> prefixed_serial = {0x08, 'L', 'D', '3', '8', '3', '6', '3', '1'};
   check(decode_ascii_string(prefixed_serial) == "LD383631", "prefixed serial number decoded");
 
+  // Length-prefixed AND null-padded to a fixed size, as reported on the
+  // GYE21JYMCFFS in PR #25: 19 bytes = prefix + 12 chars + 6 nulls.
+  std::vector<uint8_t> prefixed_padded = prefixed;
+  prefixed_padded.resize(19, 0x00);
+  check(is_length_prefixed_string(prefixed_padded), "prefixed+padded model number detected");
+  check(decode_ascii_string(prefixed_padded) == "GYE21JYMCFFS", "prefixed+padded model number decoded");
+
   // Spec-compliant fixed-size string: null-padded to 32 bytes, no prefix.
   std::vector<uint8_t> padded(32, 0x00);
   const char *model = "PDP715SYV0FS";
@@ -59,9 +66,12 @@ int main() {
   check(!is_length_prefixed_string(truncated), "over-long declared length not treated as prefix");
   check(decode_ascii_string(truncated) == std::string("\x0C") + "GYE", "over-long declared length passed through");
 
-  // A control byte that does not match the remaining length is data, not a prefix.
+  // A control byte that does not match the remaining length is data, not a
+  // prefix — a plain `data[0] <= size - 1` test would silently truncate this
+  // to "A".
   std::vector<uint8_t> stray_control = {0x01, 'A', 'B'};
   check(!is_length_prefixed_string(stray_control), "non-matching control byte not treated as prefix");
+  check(decode_ascii_string(stray_control) == std::string("\x01") + "AB", "non-matching control byte passed through");
 
   if (failures) {
     fprintf(stderr, "%d test(s) failed\n", failures);
