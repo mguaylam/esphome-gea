@@ -38,7 +38,12 @@ text_sensor:
   The ID of the parent [`gea`](hub.md) hub.
 - **erd** (*Required*, hex 16-bit): The ERD address to read.
 - **decode** (*Optional*, string): How to interpret the bytes:
-  - `ascii` — null-trimmed ASCII string.
+  - `ascii` — ASCII string. Handles both GE string conventions automatically:
+    fixed-size null-padded (trailing nulls are trimmed), and length-prefixed
+    (a leading count byte, as some appliances use for model/serial numbers —
+    detected when the first byte is a control character announcing exactly
+    the number of remaining bytes once trailing null padding is ignored, and
+    stripped).
   - `raw` — hex string like `0x0100AABB` (good for discovery).
   - One of the numeric decode types (e.g. `uint8`) when paired with `options`.
   Defaults to `raw`.
