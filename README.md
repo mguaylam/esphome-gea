@@ -1,6 +1,6 @@
 # esphome-gea
 
-[![Compile](https://github.com/mguaylam/esphome-gea/actions/workflows/compile.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/compile.yml)
+[![Validate](https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml)
 [![Test](https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml)
 [![Lint](https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml)
 [![ESPHome](https://img.shields.io/badge/ESPHome-external%20component-blue?logo=esphome)](https://esphome.io/components/external_components)
