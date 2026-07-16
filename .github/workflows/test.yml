@@ -31,6 +31,7 @@ jobs:
           - tests/components/gea/test.rp2040.yaml
           - tests/components/gea/test.esp32-idf.gea2.yaml
           - tests/components/gea/test.esp32-idf.gea2-scan.yaml
+          - tests/components/gea/test.esp32-idf.erd-lookup.yaml
 
     steps:
       - uses: actions/checkout@v4

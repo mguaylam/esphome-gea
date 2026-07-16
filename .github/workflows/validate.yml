@@ -1,0 +1,60 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-devices:
+    name: validate device configs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install ESPHome
+        run: pip install esphome
+
+      - name: Create dummy secrets
+        run: |
+          for dir in devices/*/; do
+            cat > "${dir}secrets.yaml" << 'EOF'
+          wifi_ssid: "ci-network"
+          wifi_password: "ci-password"
+          api_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          ota_password: "ci-password"
+          ap_password: "ci-password"
+          EOF
+          done
+
+      - name: Validate device configs
+        run: |
+          shopt -s globstar nullglob
+          rc=0
+          for cfg in devices/**/*.yaml; do
+            case "$cfg" in
+              */secrets.yaml) continue ;;
+            esac
+            echo "::group::esphome config $cfg"
+            if esphome config "$cfg" >/dev/null; then
+              echo "OK: $cfg"
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error file=$cfg::esphome config failed for $cfg"
+              rc=1
+            fi
+          done
+          exit $rc
+
+  validate-done:
+    needs: [validate-devices]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - run: |
+          result="${{ needs.validate-devices.result }}"
+          if [[ "$result" == "success" ]]; then exit 0; else exit 1; fi
