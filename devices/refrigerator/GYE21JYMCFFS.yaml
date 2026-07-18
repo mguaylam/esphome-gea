@@ -1,0 +1,1004 @@
+# ESPHome config for a GE Profile French Door Refrigerator via GEA2
+# Appliance: GE Profile GYE21JYMCFFS
+# Hardware: Seeed XIAO ESP32-C3
+# Framework: ESP-IDF
+# Baud rate: 19200 (GEA2)
+# TX = GPIO9, RX = GPIO10
+esphome:
+  name: ge-profile-fridge
+  friendly_name: GE Profile Refrigerator
+  project:
+    name: GE.GYE21JYMCFFS
+    version: "1.0.0"
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+web_server:
+  port: 80
+  # https://esphome.io/components/web_server.html
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "ge-profile-fridge fallback"
+    password: !secret ap_password
+  on_connect:
+    - output.turn_on: led_wifi
+  on_disconnect:
+    - output.turn_off: led_wifi
+
+captive_portal:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [gea]
+
+# ---------------------------------------------------------------------------
+# Status LEDs
+# ---------------------------------------------------------------------------
+status_led:
+  pin: GPIO2
+
+output:
+  - platform: gpio
+    pin: GPIO3
+    id: led_wifi
+  - platform: gpio
+    pin: GPIO4
+    id: led_gea
+
+interval:
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: return id(gea_hub).is_bus_connected();
+          then:
+            - output.turn_on: led_gea
+          else:
+            - output.turn_off: led_gea
+
+# ---------------------------------------------------------------------------
+# UART — GEA2 19200 baud
+# ---------------------------------------------------------------------------
+uart:
+  id: uart_gea
+  tx_pin: GPIO9
+  rx_pin: GPIO10
+  baud_rate: 19200
+
+# ---------------------------------------------------------------------------
+# GEA2 hub
+# ---------------------------------------------------------------------------
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  protocol: gea2
+  dest_address: 0xF0
+  erd_lookup: true
+
+# ---------------------------------------------------------------------------
+# Numbers (read-write numeric ERDs)
+# ---------------------------------------------------------------------------
+
+number:
+  - platform: gea
+    gea_id: gea_hub
+    name: Refrigerator Setpoint
+    erd: 0x1005
+    byte_offset: 0
+    decode: int8
+    min_value: 34
+    max_value: 44
+    step: 1
+    unit_of_measurement: "°F"
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Freezer Setpoint
+    erd: 0x1005
+    byte_offset: 1
+    decode: int8
+    min_value: -6
+    max_value: 6
+    step: 1
+    unit_of_measurement: "°F"
+
+# No Electric Deli Pan Option on this model uses plastic vent sliders
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Deli Pan Position 1 Temperature
+#    erd: 0x1013
+#    byte_offset: 0
+#    decode: uint8
+#    min_value: 30
+#    max_value: 98
+#    step: 1
+#    unit_of_measurement: "°F"
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Nighttime Snack Timeout
+    erd: 0x101F
+    decode: uint16_be
+    min_value: 0
+    max_value: 1440
+    step: 1
+    unit_of_measurement: min
+
+# ---------------------------------------------------------------------------
+# Sensors (numeric read-only)
+# ---------------------------------------------------------------------------
+sensor:
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Refrigerator Minimum Setpoint
+    erd: 0x100B
+    byte_offset: 0
+    decode: int8
+    unit_of_measurement: "°F"
+    icon: mdi:thermometer-low
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Refrigerator Maximum Setpoint
+    erd: 0x100B
+    byte_offset: 1
+    decode: int8
+    unit_of_measurement: "°F"
+    icon: mdi:thermometer-high
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Freezer Minimum Setpoint
+    erd: 0x100B
+    byte_offset: 2
+    decode: int8
+    unit_of_measurement: "°F"
+    icon: mdi:snowflake-thermometer
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Freezer Maximum Setpoint
+    erd: 0x100B
+    byte_offset: 3
+    decode: int8
+    unit_of_measurement: "°F"
+    icon: mdi:snowflake-thermometer
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Refrigerator Temperature
+    erd: 0x1004
+    byte_offset: 0
+    decode: int8
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Freezer Temperature
+    erd: 0x1004
+    byte_offset: 1
+    decode: int8
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Water Filter Life
+    erd: 0x1009
+    byte_offset: 2
+    decode: uint8
+    unit_of_measurement: "%"
+    icon: mdi:water-percent
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Water Filter Days Remaining
+    erd: 0x1009
+    byte_offset: 3
+    decode: uint16_be
+    unit_of_measurement: d
+    icon: mdi:calendar
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Water Filter Days Since Expired
+    erd: 0x1009
+    byte_offset: 5
+    decode: uint16_be
+    unit_of_measurement: d
+    icon: mdi:calendar-alert
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Water Filter Dispenses Since Expired
+    erd: 0x1009
+    byte_offset: 7
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:cup-water
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Crushed Ice Dispenses
+    erd: 0x1102
+    byte_offset: 0
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:ice-pop
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Cubed Ice Dispenses
+    erd: 0x1102
+    byte_offset: 2
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:ice-pop
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Cold Water Dispenses
+    erd: 0x1102
+    byte_offset: 4
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:water
+
+#No hot water
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Hot Water Dispenses
+#    erd: 0x1102
+#    byte_offset: 6
+#    decode: uint16_be
+#    icon: mdi:water-boiler
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Door Ice Maker Harvests
+    erd: 0x1102
+    byte_offset: 8
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:snowflake
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Freezer Ice Maker Harvests
+    erd: 0x1102
+    byte_offset: 10
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:snowflake
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Water Flow Rate
+    erd: 0x1102
+    byte_offset: 12
+    decode: uint16_be
+    icon: mdi:water-pump
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Freezer Door Open Time
+    erd: 0x1101
+    byte_offset: 0
+    decode: uint32_be
+    device_class: duration
+    unit_of_measurement: s
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:timer
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Fresh Food Door Open Time
+    erd: 0x1101
+    byte_offset: 4
+    decode: uint32_be
+    device_class: duration
+    unit_of_measurement: s
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:timer
+
+# ---------------------------------------------------------------------------
+#  erd: 0x1101 - Fresh Food Door Open Count
+#  This model doesn't report left and right fresh food doors opening.  This is
+#  doing a of a fresh food section opened count and not individual
+#  Combined into one
+#
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Fresh Food Left Door Open Count
+#    erd: 0x1101
+#    byte_offset: 8
+#    decode: uint16_be
+#    icon: mdi:counter
+
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Fresh Food Right Door Open Count
+#    erd: 0x1101
+#    byte_offset: 10
+#    decode: uint16_be
+#    icon: mdi:counter
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Fresh Food Doors Open Count
+    erd: 0x1101
+    byte_offset: 10
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:counter
+
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+#  erd: 0x1101 - Freezer Top/Bottom Door Open Count
+#  This model only has one freezer door
+#
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Freezer Top Door Open Count
+#    erd: 0x1101
+#    byte_offset: 12
+#    decode: uint16_be
+#    accuracy_decimals: 0
+#    state_class: total_increasing
+#    entity_category: diagnostic
+#    icon: mdi:counter
+
+  - platform: gea
+    gea_id: gea_hub
+#    name: Freezer Bottom Door Open Count
+    name: Freezer Door Open Count
+    erd: 0x1101
+    byte_offset: 14
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:counter
+# ---------------------------------------------------------------------------
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Start Time
+    erd: 0x1103
+    byte_offset: 0
+    decode: uint32_be
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Fresh Food Setpoint
+    erd: 0x1103
+    byte_offset: 4
+    decode: int8
+    unit_of_measurement: "°F"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Freezer Setpoint
+    erd: 0x1103
+    byte_offset: 5
+    decode: int8
+    unit_of_measurement: "°F"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Fresh Food Max Temp
+    erd: 0x1103
+    byte_offset: 6
+    decode: int8
+    unit_of_measurement: "°F"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Fresh Food Min Temp
+    erd: 0x1103
+    byte_offset: 7
+    decode: int8
+    unit_of_measurement: "°F"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Freezer Max Temp
+    erd: 0x1103
+    byte_offset: 8
+    decode: int8
+    unit_of_measurement: "°F"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Freezer Min Temp
+    erd: 0x1103
+    byte_offset: 9
+    decode: int8
+    unit_of_measurement: "°F"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Fresh Food Evaporator Max
+    erd: 0x1103
+    byte_offset: 10
+    decode: int8
+    unit_of_measurement: "°F"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Fresh Food Evaporator Min
+    erd: 0x1103
+    byte_offset: 11
+    decode: int8
+    unit_of_measurement: "°F"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Freezer Evaporator Max
+    erd: 0x1103
+    byte_offset: 12
+    decode: int8
+    unit_of_measurement: "°F"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Freezer Evaporator Min
+    erd: 0x1103
+    byte_offset: 13
+    decode: int8
+    unit_of_measurement: "°F"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Ambient Temperature
+    erd: 0x1103
+    byte_offset: 14
+    decode: int8
+    unit_of_measurement: "°F"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Ambient Humidity
+    erd: 0x1103
+    byte_offset: 15
+    decode: uint8
+    unit_of_measurement: "%"
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Fault Count
+    erd: 0x1103
+    byte_offset: 16
+    decode: uint8
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Start Time 2
+    erd: 0x1104
+    byte_offset: 0
+    decode: uint32_be
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Position A Time
+    erd: 0x1104
+    byte_offset: 4
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: s
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Position B Time
+    erd: 0x1104
+    byte_offset: 6
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: s
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Position C Time
+    erd: 0x1104
+    byte_offset: 8
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: s
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Compressor Off Time
+    erd: 0x1104
+    byte_offset: 10
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: s
+    entity_category: diagnostic
+
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Last Cycle Cooling Features
+#    erd: 0x1104
+#    byte_offset: 12
+#    decode: uint8
+#    entity_category: diagnostic
+#
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Last Cycle Hot Water Operations
+#    erd: 0x1104
+#    byte_offset: 13
+#    decode: uint8
+#    entity_category: diagnostic
+#
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Last Cycle Misc Parameters
+#    erd: 0x1104
+#    byte_offset: 14
+#    decode: uint8
+#    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Fresh Food Door Open Time
+    erd: 0x1104
+    byte_offset: 15
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: s
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Last Cycle Freezer Door Open Time
+    erd: 0x1104
+    byte_offset: 17
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: s
+    entity_category: diagnostic
+
+# ---------------------------------------------------------------------------
+# Text sensors (enum labels / ASCII)
+# ---------------------------------------------------------------------------
+text_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: Refrigerator Model
+    erd: 0x0001
+    decode: ascii
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Refrigerator Serial Number
+    erd: 0x0002
+    decode: ascii
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Refrigerator Model Code
+    erd: 0x101D
+    decode: uint8
+    options:
+      0: Bottom Freezer (French Door)
+      1: Bottom Freezer (One Door)
+      2: Side-by-Side
+      3: Single Cabinet Fresh Food
+      4: Single Cabinet Freezer
+      5: Top Freezer
+      6: Convertible Drawer - Double Drawer Bottom Freezer
+      7: Convertible Drawer - Quad Door
+      8: F&P Wine Column
+      9: F&P Columns B
+      10: Dual Zone Wine Chiller
+      11: Beverage Center
+      12: F&P Columns Fresh Food
+      13: F&P Columns Freezer
+      14: F&P 60 cm Single Door
+      15: F&P 60 cm Multi-Door
+      16: F&P RF605 Platform
+      17: F&P ActiveSmart Freestanding
+      18: F&P ActiveSmart Built In
+      19: Haier Counter Depth Platform
+      20: Convertible Drawer - Single Fresh Food Door with Double Drawer Bottom Freezer
+      21: F&P Under Counter
+      22: F&P 36 Inch MultiDoor
+      23: F&P RF680 Platform
+      24: F&P RB60 Platform
+      25: Double Under Counter Convertible Drawer
+      26: F&P 905 Platform
+      27: Single Cabinet Fresh Food with Deli Pan Under Counter
+      28: Haier HRF590 Platform
+      29: Haier HRF650 SBS Platform
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Appliance Type
+    erd: 0x0008
+    decode: uint8
+    options:
+      0: Water Heater
+      1: Clothes Dryer
+      2: Clothes Washer
+      3: Refrigerator
+      4: Microwave
+      5: Advantium
+      6: Dishwasher
+      7: Oven
+      8: Electric Range
+      9: Gas Range
+      10: Thermostat/RAC
+      11: Electric Cooktop
+      12: Pizza Oven
+      13: Gas Cooktop
+      14: Split / DFS (Duct-Free Split) AC
+      15: Hood
+      16: Point of Entry Water Filter
+      17: Induction Cooktop
+      18: Delivery Box
+      19: Kitchen Hub Vent Hood
+      20: Zoneline/PTAC
+      21: Water Softener
+      22: Portable AC
+      23: Combination Washer Dryer
+      24: Dual Zone Wine Chiller
+      25: Beverage Center
+      26: Coffee Brewer
+      27: Opal Nugget Ice Maker
+      28: In-Home Grower
+      29: Dehumidifier
+      30: Under Counter Ice Maker
+      31: Through Wall AC
+      32: F&P DishDrawer
+      33: Espresso Coffee Maker
+      34: Toaster Oven
+      35: Zoneline/Vertical
+      36: Central DFS (Duct-Free Split) Controller
+      37: BLE Mesh Gateway
+      38: Stand Mixer
+      39: Fisher & Paykel Cooktop
+      40: F&P Cooktop Teppanyaki
+      41: F&P Ventilation Downdraft
+      42: Smart Plug
+      43: Smoker
+      44: Air Handler VRF
+      45: Fabric Care Cabinet Closet
+      46: Laundry Center
+      47: Grill
+      48: Freezer
+      49: Warming Drawer
+      50: Vacuum Seal Drawer
+      51: Wine Cabinet
+      52: Central AC
+      53: Soft Starter
+      54: Hearth Pizza Oven
+      55: Sourdough Starter
+      56: Thermostat
+      255: Unknown
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Temperature Units
+    erd: 0x0007
+    decode: uint8
+    options:
+      0: Fahrenheit
+      1: Celsius
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Water Filter Type
+    erd: 0x1019
+    decode: uint8
+    options:
+      0: RPWF
+      1: RPWFE
+      2: MWF
+      3: MWFE
+      4: XWF
+      5: XWFE
+      6: ZWFE
+      7: ZWFUV
+      8: ZWFPFAS
+      9: ZWFPLUS
+      10: ZWFEC
+      11: ZWFEC1
+      12: ZWFEC2
+      13: ZWFEC3
+      14: ZWFSEN
+      15: ZWFSEN1
+      16: ZWFSEN2
+      17: ZWFSEN3
+      18: ZWFSEN4
+      19: ZWFSEN5
+      20: ZWFSEN6
+      21: ZWFX1
+      22: MSWF
+      23: GSWF
+      255: Feature Unavailable
+
+# no odor filter on this model
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Odor Filter Status
+#    erd: 0x101C
+#    decode: uint8
+#    options:
+#      0: Good
+#      1: Order Now
+#      2: Expired
+#      255: NA/Not Equipped
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Water Filter Status
+    erd: 0x1009
+    byte_offset: 0
+    decode: uint8
+    options:
+      0: GE Standard Good Filter
+      3: GE Bypass Plug
+      4: Leak Detected
+      5: Error
+      255: Not Applicable
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Water Filter Order Status
+    erd: 0x1009
+    byte_offset: 1
+    decode: uint8
+    options:
+      0: Filter Does Not Need To Be Ordered
+      1: Filter Needs To Be Ordered
+      2: Filter Has Expired
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Freezer Door Status
+    erd: 0x1016
+    byte_offset: 2
+    decode: uint8
+    options:
+      0: Closed
+      1: Open
+      255: Not Applicable
+
+# ---------------------------------------------------------------------------
+#  erd: 0x1016 - Fresh Food Door Status
+#  This model doesn't report left and right fresh food doors status.  They are
+#  combined into offset 0 if either door opens then only Offset zero updates
+#  Commented them out and combinded them
+#
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Fresh Food Right Door Status
+#    erd: 0x1016
+#    byte_offset: 0
+#    decode: uint8
+#    options:
+#      0: Closed
+#      1: Open
+#      255: Not Applicable
+#
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Fresh Food Left Door Status
+#    erd: 0x1016
+#    byte_offset: 1
+#    decode: uint8
+#    options:
+#      0: Closed
+#      1: Open
+#      255: Not Applicable
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Fresh Food Doors Status
+    erd: 0x1016
+    byte_offset: 0
+    decode: uint8
+    options:
+      0: Closed
+      1: Open
+      255: Not Applicable
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+#  There is no convertible draw in this model
+#
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Convertible Drawer Status
+#    erd: 0x1016
+#    byte_offset: 3
+#    decode: uint8
+#    options:
+#      0: Closed
+#      1: Open
+#      255: Not Applicable
+
+# These result in 255 - there is only one ice maker and it has a physical on off switch
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Freezer Ice Maker
+#    erd: 0x100A
+#    byte_offset: 0
+#    decode: uint8
+#    options:
+#      0: Off
+#      1: On
+#      255: Not Applicable
+#
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Fresh Food Ice Maker
+#    erd: 0x100A
+#    byte_offset: 1
+#    decode: uint8
+#    options:
+#      0: Off
+#      1: On
+#      255: Not Applicable
+
+# ---------------------------------------------------------------------------
+# Selects (read-write enum ERDs)
+# ---------------------------------------------------------------------------
+select:
+  - platform: gea
+    gea_id: gea_hub
+    name: Sabbath Mode
+    erd: 0x0009
+    decode: uint8
+    options:
+      0: Disable
+      1: Enable
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Sound Level
+    erd: 0x000A
+    decode: uint8
+    options:
+      0: Off/Mute
+      1: Low
+      2: Medium
+      3: High
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Enhanced Sabbath Mode
+    erd: 0x004F
+    decode: uint8
+    options:
+      0: Inactive
+      1: Active
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Nighttime Snack Mode
+    erd: 0x101E
+    decode: uint8
+    options:
+      0: "Off"
+      1: "On"
+
+# ---------------------------------------------------------------------------
+# Binary sensors
+# ---------------------------------------------------------------------------
+binary_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: Fresh Food Door Alarm
+    erd: 0x1006
+    bitmask: 0x01
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Freezer Door Alarm
+    erd: 0x1006
+    bitmask: 0x02
+
+# ---------------------------------------------------------------------------
+#  There is no convertible draw in this model
+#
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Convertible Drawer Alarm
+#    erd: 0x1006
+#    bitmask: 0x04
+# ---------------------------------------------------------------------------
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Door-In-Door Alarm
+    erd: 0x1006
+    bitmask: 0x08
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Fresh Food Ice Maker Present
+    erd: 0x1007
+    bitmask: 0x01
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Fresh Food Ice Bucket Full
+    erd: 0x1007
+    bitmask: 0x04
+
+# ---------------------------------------------------------------------------
+# There is not a freezer Ice Bucket in this model
+# ---------------------------------------------------------------------------
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Freezer Ice Bucket Full
+#    erd: 0x1007
+#    bitmask: 0x08
+#
+#  - platform: gea
+#    gea_id: gea_hub
+#    name: Freezer Ice Maker Present
+#    erd: 0x1007
+#    bitmask: 0x02
+# ---------------------------------------------------------------------------
