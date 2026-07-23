@@ -399,8 +399,7 @@ void GEAComponent::setup() {
       dest_addr_ = GEA_BROADCAST_ADDR;
       ESP_LOGI(TAG, "GEA2 mode — dest_address not set; probing the bus to discover the appliance address");
     } else {
-      ESP_LOGI(TAG, "GEA2 mode — values will be polled (interval=%u ms)", poll_interval_ms_);
-      last_poll_ms_ = millis();
+      ESP_LOGI(TAG, "GEA2 mode — values will be polled (default interval=%u ms)", poll_interval_ms_);
 #ifdef GEA_GEA2_DISCOVERY
       if (gea2_discovery_)
         discovery_init_();
@@ -429,7 +428,13 @@ void GEAComponent::dump_config() {
   }
   ESP_LOGCONFIG(TAG, "  Src address:  0x%02X", src_addr_);
   if (protocol_ == Protocol::GEA2) {
-    ESP_LOGCONFIG(TAG, "  Poll interval: %u ms", poll_interval_ms_);
+    ESP_LOGCONFIG(TAG, "  Poll interval (default): %u ms", poll_interval_ms_);
+    if (!poll_overrides_.empty()) {
+      ESP_LOGCONFIG(TAG, "  Poll overrides: %zu", poll_overrides_.size());
+      for (auto &kv : poll_overrides_) {
+        ESP_LOGCONFIG(TAG, "    ERD 0x%04X: %u ms", kv.first, kv.second);
+      }
+    }
   }
   ESP_LOGCONFIG(TAG, "  Registered entities: %zu", entities_.size());
   for (auto *e : entities_) {
@@ -645,14 +650,27 @@ void GEAComponent::loop() {
   // Log RX stats every 10 s so we can confirm the UART is receiving at all.
   uint32_t now_stats = millis();
   if (now_stats - last_stats_ms_ >= 10000) {
+    uint32_t window = now_stats - last_stats_ms_;
     last_stats_ms_ = now_stats;
     if (protocol_ == Protocol::GEA2) {
       ESP_LOGD(TAG, "RX stats: %u bytes total, %u TX collisions, bus %s", rx_byte_count_, tx_collisions_,
                is_bus_connected() ? "CONNECTED" : "no valid packets yet");
+      // Measured bus occupancy: fraction of the window spent in our GEA2
+      // read/write round-trips. The complement is the real headroom left for
+      // the appliance's own traffic — the live counterpart to the estimate
+      // logged when the poll schedule was built.
+      if (poll_list_built_ && !poll_erds_.empty() && window > 0) {
+        float occ = 100.0f * (float)gea2_busy_ms_ / (float)window;
+        if (occ > 100.0f)
+          occ = 100.0f;
+        ESP_LOGD(TAG, "GEA2 bus occupancy: ~%.0f%% busy, ~%.0f%% idle (measured over %u ms)", occ, 100.0f - occ,
+                 window);
+      }
     } else {
       ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s", rx_byte_count_,
                is_bus_connected() ? "CONNECTED" : "no valid packets yet");
     }
+    gea2_busy_ms_ = 0;
   }
 
   if (protocol_ == Protocol::GEA2) {
@@ -676,12 +694,11 @@ void GEAComponent::loop() {
       }
     } else {
 #endif
-      // Normal round-robin polling of declared entities.
-      uint32_t now_poll = millis();
-      if (now_poll - last_poll_ms_ >= poll_interval_ms_) {
-        poll_next_();
-        last_poll_ms_ = now_poll;
-      }
+      // Per-ERD polling of declared entities. poll_next_() picks the most
+      // overdue ERD that is due (honouring each ERD's own interval) and is
+      // cheap to call every pass — it returns at once while a request is in
+      // flight or nothing is due yet.
+      poll_next_();
 #ifdef GEA_GEA2_DISCOVERY
     }
 #endif
@@ -820,42 +837,62 @@ void GEAComponent::write_erd(uint16_t erd, const std::vector<uint8_t> &data) {
 // GEAComponent — GEA2 polling
 // =============================================================================
 
-// Build the round-robin poll list once entities have all registered. Called
-// lazily on the first poll. Includes ERDs from registered entities and from
-// on_erd_change triggers, deduplicated.
-void GEAComponent::build_poll_list_() {
-  poll_erds_.clear();
-  for (auto *e : entities_) {
-    uint16_t erd = e->get_erd();
-    bool seen = false;
-    for (uint16_t existing : poll_erds_) {
-      if (existing == erd) {
-        seen = true;
-        break;
-      }
-    }
-    if (!seen)
-      poll_erds_.push_back(erd);
+// Add one ERD to the poll schedule unless it is already present. Each entry
+// gets its own refresh interval (the per-ERD override if configured, otherwise
+// the hub-wide default) and is seeded one interval in the past so it is due on
+// the very first poll pass.
+void GEAComponent::add_poll_erd_(uint16_t erd) {
+  for (auto &e : poll_erds_) {
+    if (e.erd == erd)
+      return;
   }
-  for (auto *t : erd_change_triggers_) {
-    uint16_t erd = t->get_erd();
-    bool seen = false;
-    for (uint16_t existing : poll_erds_) {
-      if (existing == erd) {
-        seen = true;
-        break;
-      }
-    }
-    if (!seen)
-      poll_erds_.push_back(erd);
-  }
-  poll_list_built_ = true;
-  ESP_LOGI(TAG, "GEA2 poll list built: %zu unique ERDs", poll_erds_.size());
+  uint32_t interval = poll_interval_ms_;
+  auto it = poll_overrides_.find(erd);
+  if (it != poll_overrides_.end())
+    interval = it->second;
+  poll_erds_.push_back(Gea2PollEntry{erd, interval, millis() - interval});
 }
 
-// Enqueue a read for the next ERD in the round-robin. Skips silently if the
-// queue is non-empty (a write or prior poll is still in flight) so that polls
-// don't pile up behind user-initiated traffic.
+// Build the per-ERD poll schedule once entities have all registered. Called
+// lazily on the first poll. Includes ERDs from registered entities and from
+// on_erd_change triggers, deduplicated, then logs the estimated steady-state
+// bus occupancy so an oversubscribed configuration is visible at boot.
+void GEAComponent::build_poll_list_() {
+  poll_erds_.clear();
+  for (auto *e : entities_)
+    add_poll_erd_(e->get_erd());
+  for (auto *t : erd_change_triggers_)
+    add_poll_erd_(t->get_erd());
+  poll_list_built_ = true;
+
+  // Estimated occupancy: an ERD polled every interval_ms keeps the bus busy
+  // for ~GEA2_POLL_COST_MS each time, i.e. a fraction GEA2_POLL_COST_MS/interval
+  // of the time. Summed across ERDs this is the share of the bus the schedule
+  // demands; the rest is headroom for the appliance's own traffic.
+  float occupancy = 0.0f;
+  for (auto &e : poll_erds_)
+    occupancy += (float)GEA2_POLL_COST_MS / (float)e.interval_ms;
+  float headroom = occupancy < 1.0f ? (1.0f - occupancy) * 100.0f : 0.0f;
+  ESP_LOGI(TAG, "GEA2 poll schedule built: %zu unique ERDs, ~%.0f%% estimated bus occupancy (~%.0f%% headroom)",
+           poll_erds_.size(), occupancy * 100.0f, headroom);
+  if (occupancy >= 0.90f) {
+    ESP_LOGW(TAG,
+             "GEA2 poll schedule oversubscribed (~%.0f%%): the bus cannot meet every ERD's interval, so reads will "
+             "run late and retries may rise. Raise poll_interval or relax some poll_overrides.",
+             occupancy * 100.0f);
+  } else if (occupancy >= 0.60f) {
+    ESP_LOGW(TAG,
+             "GEA2 poll schedule is heavy (~%.0f%% of the bus): little headroom for the appliance's own traffic. "
+             "Consider raising poll_interval or some poll_overrides.",
+             occupancy * 100.0f);
+  }
+}
+
+// Enqueue a read for the most overdue ERD that is due now, honouring each ERD's
+// own interval. "Most overdue first" is starvation-free: an ERD's lateness
+// grows every millisecond it waits, so it eventually outranks any fast ERD
+// (whose lateness resets to negative the moment it is served). Skips silently
+// while a request is in flight so polls don't pile up behind other traffic.
 void GEAComponent::poll_next_() {
   if (!poll_list_built_)
     build_poll_list_();
@@ -863,9 +900,20 @@ void GEAComponent::poll_next_() {
     return;
   if (pending_active_ || !request_queue_.empty())
     return;
-  uint16_t erd = poll_erds_[poll_index_];
-  poll_index_ = (poll_index_ + 1) % poll_erds_.size();
-  read_erd(erd);
+  uint32_t now = millis();
+  Gea2PollEntry *due = nullptr;
+  int32_t most_overdue = -1;
+  for (auto &e : poll_erds_) {
+    int32_t overdue = (int32_t)(now - e.last_poll_ms) - (int32_t)e.interval_ms;
+    if (overdue >= 0 && overdue > most_overdue) {
+      most_overdue = overdue;
+      due = &e;
+    }
+  }
+  if (due == nullptr)
+    return;  // nothing due yet
+  due->last_poll_ms = now;
+  read_erd(due->erd);
 }
 
 // =============================================================================
@@ -928,7 +976,6 @@ void GEAComponent::drive_gea2_addr_discovery_() {
     ESP_LOGI(TAG, "GEA2 address discovery: appliance found at 0x%02X (after %u probe(s))", dest_addr_,
              (unsigned)addr_probe_attempts_);
     ESP_LOGI(TAG, "  Pin it with 'dest_address: 0x%02X' in YAML to skip discovery on future boots.", dest_addr_);
-    last_poll_ms_ = millis();
 #ifdef GEA_GEA2_DISCOVERY
     if (gea2_discovery_)
       discovery_init_();
@@ -1208,6 +1255,9 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
 #endif
       log_discovery_(erd, data);
       dispatch_erd_(erd, data);
+      // Measured bus-busy time of this poll (TX frame + appliance turnaround +
+      // RX frame), accumulated for the occupancy figure in the stats block.
+      gea2_busy_ms_ += millis() - pending_.sent_at_ms;
       finish_pending_();
       break;
     }
@@ -1229,6 +1279,7 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
         break;
       }
       ESP_LOGD(TAG, "Write ERD 0x%04X OK", erd);
+      gea2_busy_ms_ += millis() - pending_.sent_at_ms;  // measured bus-busy time
       finish_pending_();
       // Re-read the ERD so entity state reflects the committed value without
       // waiting for the next poll cycle.
@@ -1443,7 +1494,7 @@ void GEAComponent::discovery_save_progress_() {
   memcpy(prefs.valid_bitmap, discovery_bitmap_.data(), GEA2_DISCOVERY_BITMAP_BYTES);
   discovery_pref_.save(&prefs);
   ESP_LOGD(TAG, "Discovery: saved progress — %zu / %zu scanned, %zu found", discovery_index_, GEA2_DISCOVERY_TABLE_SIZE,
-           poll_erds_.size());
+           discovery_found_erds_.size());
 }
 
 void GEAComponent::log_discovery_erds_() const {
