@@ -278,6 +278,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // GEA2 collision avoidance (bus-idle gate) and detection (TX echo check)
   bool gea2_bus_clear_() const;
   bool consume_gea2_echo_byte_(uint8_t byte);
+  void report_gea2_echo_wiring_();
 
   // RX state machine
   void process_rx_byte_(uint8_t byte);
@@ -344,6 +345,19 @@ class GEAComponent : public uart::UARTDevice, public Component {
   std::vector<uint8_t> gea2_echo_buf_;  // expected echo (exact wire bytes)
   size_t gea2_echo_idx_{0};             // match cursor into gea2_echo_buf_
   uint32_t gea2_echo_at_ms_{0};         // when the frame was written (for the timeout)
+  // Wiring conformance.  The reference design feeds the bus signal back into
+  // RX, so every transmitted frame returns as an echo; collision detection
+  // depends on it.  A wiring that never returns a full echo cannot detect
+  // collisions at all, so say so rather than quietly adapting to it — the
+  // component keeps working, in a degraded and now explicitly reported mode.
+  uint32_t gea2_tx_frames_{0};           // GEA2 frames written to the wire
+  bool gea2_echo_ever_verified_{false};  // a full echo matched at least once
+  bool gea2_echo_warned_{false};         // wiring warning already logged
+  uint32_t gea2_echo_warn_ms_{0};        // when it was last logged
+  // Frames to transmit before judging the wiring, and how often to repeat the
+  // warning afterwards so it stays visible in a rotating log without spamming.
+  static constexpr uint32_t GEA2_ECHO_PROBE_FRAMES = 5;
+  static constexpr uint32_t GEA2_ECHO_WARN_INTERVAL_MS = 600000;
   // Runs loop() continuously while a GEA2 exchange is in flight so the echo
   // matcher, backoff retries and the bus-idle gate react at millisecond
   // resolution instead of the ~16 ms default loop interval.  Released as soon

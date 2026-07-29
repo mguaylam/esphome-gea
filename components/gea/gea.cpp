@@ -224,6 +224,7 @@ void GEAComponent::send_packet_(uint8_t dest, const std::vector<uint8_t> &payloa
     gea2_echo_buf_ = std::move(frame);
     gea2_echo_idx_ = 0;
     gea2_echo_at_ms_ = millis();
+    gea2_tx_frames_++;
   }
 }
 
@@ -343,6 +344,7 @@ bool GEAComponent::consume_gea2_echo_byte_(uint8_t byte) {
       ESP_LOGV(TAG, "GEA2 TX echo verified (%zu bytes)", gea2_echo_buf_.size());
       gea2_echo_buf_.clear();
       gea2_echo_idx_ = 0;
+      gea2_echo_ever_verified_ = true;  // this wiring does loop TX back onto RX
     }
     return true;
   }
@@ -364,6 +366,30 @@ bool GEAComponent::consume_gea2_echo_byte_(uint8_t byte) {
   for (size_t i = 0; i < presumed_len; i++)
     process_rx_byte_(presumed[i]);
   return false;  // diverging byte — let the parser see it and resync on STX
+}
+
+// Judge the wiring once enough frames have gone out.  The reference design
+// (FirstBuild / GE Home Assistant Adapter) feeds the bus signal back into RX,
+// so by now a full echo should have matched at least once.  If none ever has,
+// this board does not return the echo — collision detection is then impossible
+// and every exchange pays a needless retry.  Report that plainly, repeating at
+// a long interval so it stays visible in a rotating log.  The component keeps
+// working in this state, but it does not pretend the wiring is conforming.
+void GEAComponent::report_gea2_echo_wiring_() {
+  if (gea2_echo_ever_verified_ || gea2_tx_frames_ < GEA2_ECHO_PROBE_FRAMES)
+    return;
+  uint32_t now = millis();
+  if (gea2_echo_warned_ && now - gea2_echo_warn_ms_ < GEA2_ECHO_WARN_INTERVAL_MS)
+    return;
+  gea2_echo_warned_ = true;
+  gea2_echo_warn_ms_ = now;
+  ESP_LOGW(TAG,
+           "GEA2 TX echo never verified after %u frames — this wiring does not loop TX back onto RX (or returns it "
+           "truncated)",
+           gea2_tx_frames_);
+  ESP_LOGW(TAG,
+           "  Collision detection is unavailable and reads pay needless retries. Check the adapter against the "
+           "reference design — see docs/protocol.md");
 }
 
 // Returns true if an incoming response's command and request ID match the
@@ -661,6 +687,7 @@ void GEAComponent::loop() {
     if (protocol_ == Protocol::GEA2) {
       ESP_LOGD(TAG, "RX stats: %u bytes total, %u TX collisions, bus %s", rx_byte_count_, tx_collisions_,
                is_bus_connected() ? "CONNECTED" : "no valid packets yet");
+      report_gea2_echo_wiring_();
     } else {
       ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s", rx_byte_count_,
                is_bus_connected() ? "CONNECTED" : "no valid packets yet");
