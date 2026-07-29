@@ -222,6 +222,24 @@ board:
 Schematic of the official board:
 [geappliances/home-assistant-adapter/doc/schematic-v1.0.pdf](https://github.com/geappliances/home-assistant-adapter/blob/main/doc/schematic-v1.0.pdf).
 
+### Hardware baseline
+
+This component targets the FirstBuild / GE Home Assistant Adapter electrical
+design as its reference, and expects other boards to conform to it. On GEA2
+that means one property in particular: **the bus signal is fed back into the
+MCU RX, so every transmitted frame returns as an echo**. Byte-level collision
+detection is built on that echo, and a board that does not return it cannot
+detect collisions at all — on a bus it shares with the appliance's own control
+and UI traffic.
+
+Board variations are supported when they can be expressed in ESPHome's `uart`
+component — pin choice, `inverted: true`, baud rate — because those cost nothing
+here. They are not supported when they would require a separate code path inside
+this component: a wiring that never returns the echo is reported with a `WARN`
+(see [Diagnostics](diagnostics.md)) and keeps polling in a degraded mode, but
+collision detection stays unavailable and every exchange pays a retry. Fixing
+the adapter is the remedy, not a compatibility mode.
+
 ## Collision handling (GEA2)
 
 Because GEA2 is a multi-node bus, two nodes can start transmitting at the
@@ -244,7 +262,11 @@ node's address).
   request is resent after a short random backoff (2–19 ms) instead of
   waiting out the full 250 ms timeout. Detected collisions are counted
   (`get_tx_collisions()` — see [Diagnostics](diagnostics.md)) and included
-  in the periodic RX stats log line.
+  in the periodic RX stats log line. Bytes consumed before a mismatch were
+  only *presumed* to be the echo — every frame opens with STX, so anything
+  arriving inside the echo window matches that first byte by construction —
+  so they are replayed into the parser, and genuine traffic caught in that
+  window still decodes instead of losing its STX.
 - **Millisecond responsiveness** — while an exchange is in flight the
   component holds ESPHome's high-frequency loop request, so the idle gate,
   echo matcher and backoff retry run at millisecond resolution instead of
