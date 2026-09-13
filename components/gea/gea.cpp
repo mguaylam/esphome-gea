@@ -642,12 +642,27 @@ void GEAComponent::loop() {
     gea2_echo_idx_ = 0;
   }
 
+  // A frame that started but never terminated must not hold the parser out of
+  // IDLE.  On GEA2 this is a hard deadlock: gea2_bus_clear_() refuses to
+  // transmit while rx_state_ != IDLE, but the appliance only speaks when
+  // polled — so no further bytes arrive to resynchronise the parser, and the
+  // poller never recovers.  Truncation itself is expected (a blocked main loop
+  // can overrun the UART FIFO); being unable to recover from it is the bug.
+  if (rx_state_ != RxState::IDLE && millis() - rx_frame_at_ms_ >= RX_FRAME_TIMEOUT_MS) {
+    rx_frame_timeouts_++;
+    ESP_LOGW(TAG, "RX: frame incomplete after %u ms (%zu bytes buffered) — discarding and resynchronising",
+             (unsigned) RX_FRAME_TIMEOUT_MS, rx_buf_.size());
+    rx_buf_.clear();
+    rx_state_ = RxState::IDLE;
+  }
+
   // Log RX stats every 10 s so we can confirm the UART is receiving at all.
   uint32_t now_stats = millis();
   if (now_stats - last_stats_ms_ >= 10000) {
     last_stats_ms_ = now_stats;
     if (protocol_ == Protocol::GEA2) {
-      ESP_LOGD(TAG, "RX stats: %u bytes total, %u TX collisions, bus %s", rx_byte_count_, tx_collisions_,
+      ESP_LOGD(TAG, "RX stats: %u bytes total, %u TX collisions, %u frame timeouts, bus %s", rx_byte_count_,
+               tx_collisions_, rx_frame_timeouts_,
                is_bus_connected() ? "CONNECTED" : "no valid packets yet");
     } else {
       ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s", rx_byte_count_,
@@ -968,6 +983,7 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
       if (byte == GEA_STX) {
         rx_buf_.clear();
         rx_state_ = RxState::IN_PACKET;
+        rx_frame_at_ms_ = millis();
         ESP_LOGD(TAG, "RX: STX — frame started");
       } else if (byte != GEA_ACK) {
         ESP_LOGV(TAG, "RX: unexpected byte 0x%02X while idle", byte);
@@ -975,6 +991,7 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
       break;
 
     case RxState::IN_PACKET:
+      rx_frame_at_ms_ = millis();
       if (byte == GEA_STX) {
         // Unexpected re-sync: restart frame.
         rx_buf_.clear();
@@ -985,6 +1002,12 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
         process_packet_(rx_buf_);
         rx_state_ = RxState::IDLE;
         rx_buf_.clear();
+      } else if (rx_buf_.size() >= RX_FRAME_MAX_BYTES) {
+        // LEN is one byte, so no real frame reaches this size: the stream has
+        // desynchronised.  Drop it rather than growing the buffer without bound.
+        ESP_LOGW(TAG, "RX: frame exceeded %zu bytes without ETX — resynchronising", RX_FRAME_MAX_BYTES);
+        rx_buf_.clear();
+        rx_state_ = RxState::IDLE;
       } else {
         rx_buf_.push_back(byte);
       }
@@ -992,6 +1015,7 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
 
     case RxState::ESCAPE:
       // Unescape: byte after ESC is the original byte as-is.
+      rx_frame_at_ms_ = millis();
       rx_buf_.push_back(byte);
       rx_state_ = RxState::IN_PACKET;
       break;
