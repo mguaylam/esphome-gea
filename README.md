@@ -155,6 +155,7 @@ Complete configurations for known appliances:
 | [`PFQ97HSPVDS.yaml`](devices/washer/PFQ97HSPVDS.yaml) | GE PFQ97HSPVDS Ultrafast Combo | Time remaining, door/lock/pump sensors, 200+ cycle options, remote start/stop, dosing |
 | [`RE2H50S10.yaml`](devices/water-heater/RE2H50S10.yaml) | Bradford White AeroTherm heat pump water heater | GEA2 bus, water_heater template with °F↔°C conversion, heat pump / hybrid / vacation modes |
 | [`GYE21JYMCFFS.yaml`](devices/refrigerator/GYE21JYMCFFS.yaml) | GE Profile GYE21JYMCFFS French Door refrigerator | GEA2 bus, fridge/freezer setpoints and temperatures, water filter life, ice/water dispense counters, door open timers, last-cycle diagnostics, Sabbath mode |
+| [`GFD48GSSK0WW.yaml`](devices/dryer/GFD48GSSK0WW.yaml) | GE GFD48GSSK0WW gas dryer | GEA2 bus at 0x24 (not 0xC0), state/phase/cycle/time remaining; read-only by design (full ERD scan documented) |
 
 Got a working config for another appliance? PRs welcome.
 
