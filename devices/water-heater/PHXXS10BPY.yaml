@@ -377,8 +377,8 @@ sensor:
 
   - platform: gea
     gea_id: gea_hub
-    name: "T1 Temperature"
-    id: t1_temperature
+    name: "Lower Tank Temperature"
+    id: lower_tank_temperature
     erd: 0x405F
     decode: int16_be
     multiplier: 0.1
@@ -389,8 +389,8 @@ sensor:
 
   - platform: gea
     gea_id: gea_hub
-    name: "T2 Temperature"
-    id: t2_temperature
+    name: "Upper Tank Temperature"
+    id: upper_tank_temperature
     erd: 0x4060
     decode: int16_be
     multiplier: 0.1
@@ -401,8 +401,8 @@ sensor:
 
   - platform: gea
     gea_id: gea_hub
-    name: "T3a Temperature"
-    id: t3a_temperature
+    name: "Evaporator Inlet Temperature"
+    id: evap_inlet_temperature
     erd: 0x4061
     decode: int16_be
     multiplier: 0.1
@@ -413,8 +413,8 @@ sensor:
 
   - platform: gea
     gea_id: gea_hub
-    name: "T3b Temperature"
-    id: t3b_temperature
+    name: "Evaporator Outlet Temperature"
+    id: evap_outlet_temperature
     erd: 0x4062
     decode: int16_be
     multiplier: 0.1
@@ -425,8 +425,8 @@ sensor:
 
   - platform: gea
     gea_id: gea_hub
-    name: "T4 Temperature"
-    id: t4_temperature
+    name: "Compressor Discharge Temperature"
+    id: compressor_discharge_temperature
     erd: 0x4063
     decode: int16_be
     multiplier: 0.1
@@ -437,8 +437,8 @@ sensor:
 
   - platform: gea
     gea_id: gea_hub
-    name: "T5 Temperature"
-    id: t5_temperature
+    name: "Ambient Temperature"
+    id: ambient_temperature
     erd: 0x4064
     decode: int16_be
     multiplier: 0.1
@@ -449,8 +449,8 @@ sensor:
 
   - platform: gea
     gea_id: gea_hub
-    name: "T6 Temperature"
-    id: t6_temperature
+    name: "EMV Water Outlet Temperature"
+    id: emv_outlet_temperature
     erd: 0x406E
     decode: uint16_be
     multiplier: 0.1
@@ -461,8 +461,8 @@ sensor:
 
   - platform: gea
     gea_id: gea_hub
-    name: "T7 Temperature"
-    id: t7_temperature
+    name: "EMV Water Inlet Temperature"
+    id: emv_inlet_temperature
     erd: 0x40B9
     decode: int16_be
     multiplier: 0.1
@@ -517,18 +517,6 @@ sensor:
 # ============================================================
 # WATER HEATER STATUS
 # ============================================================
-
-  - platform: gea
-    gea_id: gea_hub
-    name: "Water Heater Setpoint (Read)"
-    id: user_setpoint_sensor
-    erd: 0x4024
-    decode: int16_be
-    multiplier: 0.1
-    unit_of_measurement: "°F"
-    accuracy_decimals: 1
-    device_class: temperature
-    state_class: measurement
 
   - platform: gea
     gea_id: gea_hub
@@ -834,7 +822,18 @@ number:
     device_class: temperature
     mode: slider
 
-
+  # Vacation Timer
+  - platform: gea
+    gea_id: gea_hub
+    id: vacation_hours
+    name: "Vacation Hour Timer"
+    erd: 0x4028
+    decode: uint16_be
+    min_value: 0
+    max_value: 4776
+    step: 1
+    unit_of_measurement: "h"
+    
 select:
 
   # ----------------------------------------------------------
