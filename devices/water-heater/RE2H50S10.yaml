@@ -19,7 +19,8 @@
 #   - AeroTherm G2 quick service guide: https://docs.bradfordwhite.com/Quick_Service_Guide/238-55219-00_Current.pdf
 # - The RE2H guide documents T2/T3a/T3b/T4/T5. The newer G2 guide additionally
 #   identifies T1 as the lower tank sensor and T2 as the upper tank sensor.
-#   T1's physical role on RE2H50S10 still needs live validation; T6 remains undocumented.
+#   Live RE2H50S10 readings are consistent with T1 as the lower tank sensor.
+#   T6 remains undocumented; this unit reports 0xFFFF when it is unavailable.
 
 # GEA2 discovery complete — 44 ERDs responded out of 2445 scanned
 # Copy the ERDs below into your YAML to build your configuration:
@@ -44,17 +45,17 @@
 #   0x404D  # Anode hours of service - reported zeroes, probably doesn't work
 #   0x4056  # Diagnostic Failure counts - service mode exposes per-fault counters; ERD byte-to-fault mapping still needs validation
 #   0x4058  # Heating Issues - haven't checked
-#   0x405F  # T1 Temperature - exposed for validation; newer AeroTherm G2 docs identify T1 as lower tank, but RE2H docs do not list T1
+#   0x405F  # T1 Temperature - lower tank sensor; mapping matches newer AeroTherm G2 docs and live RE2H50S10 behavior
 #   0x4060  # T2 Temperature - tank (water) temperature per RE2H service guide; newer G2 docs identify T2 as upper tank
 #   0x4061  # T3a Temperature - evaporator inlet temperature per Bradford White service guide
 #   0x4062  # T3b Temperature - evaporator outlet temperature per Bradford White service guide
 #   0x4063  # T4 Temperature - compressor discharge/outlet temperature per Bradford White service guide
 #   0x4064  # T5 Temperature - ambient air temperature per Bradford White service guide
-#   0x4065  # Measured current - looks correct
+#   0x4065  # Measured current - uint16 x0.1 A; validated against voltage and D007 under compressor and resistance loads
 #   0x4066  # Measured voltage - looks slightly high, but correct
 #   0x4068  # Relay status - existing bits map compressor, upper/lower elements and fan; matches service-mode component list
-#   0x4069  # Flow state - reported zeroes, probably doesn't work
-#   0x406E  # T6 Temperature - responds on RE2H50S10 but is not identified in the Bradford White service thermistor tables; exposed for validation
+#   0x4069  # Flow state - live enum changes (observed 0x00 and 0x03); exact meanings still need validation
+#   0x406E  # T6 Temperature - undocumented; this RE2H50S10 currently returns 0xFFFF (unavailable)
 #   0x4081  # Anode alarm active - haven't checked, doubt it works since other anode checks don't
 #   0x4082  # Accessory low battery alarm active - haven't checked
 #   0x4083  # Accessory leak detected alarm active - haven't checked
@@ -66,7 +67,7 @@
 #   0x6003  # Wireless Connection State - haven't checked
 #   0xD001  # DSM Override Status - haven't checked
 #   0xD002  # DSM Override Allowed - haven't checked
-#   0xD007  # Appliance Cumulative Energy - this look like it's power, not energy, and u16_be, not u32
+#   0xD007  # Public metadata says Appliance Cumulative Energy, but RE2H50S10 uses the first u16 as instantaneous watts; trailing u16 meaning unknown
 #   0xD008  # Available Demand Response Modes - haven't checked
 
 esphome:
@@ -130,12 +131,11 @@ sensor:
   # Temperature ERDs use signed 16-bit values in °F x10.
   #
   # T1 is not listed in the RE2H quick-service thermistor table. The newer
-  # AeroTherm G2 guide identifies T1 as the lower tank sensor, so expose it
-  # here under its neutral T1 name until that physical mapping is confirmed
-  # on an RE2H50S10.
+  # AeroTherm G2 guide identifies T1 as the lower tank sensor, and live
+  # RE2H50S10 behavior is consistent with that mapping.
   - platform: gea
     gea_id: gea_hub
-    name: "T1 Temperature"
+    name: "Lower Tank Temperature (T1)"
     id: t1_temperature
     erd: 0x405F
     decode: int16_be
@@ -227,6 +227,12 @@ sensor:
     device_class: temperature
     state_class: measurement
     entity_category: diagnostic
+    # 0xFFFF is the appliance's unavailable/not-present sentinel for T6.
+    filters:
+      - lambda: |-
+          if (x > 6500.0f)
+            return NAN;
+          return x;
 
   # Live electrical telemetry. Exposed as diagnostics while we correlate
   # these values with D007 and relay state under known loads.
@@ -235,7 +241,10 @@ sensor:
     name: "Measured Current"
     erd: 0x4065
     decode: uint16_be
-    accuracy_decimals: 0
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "A"
+    device_class: current
     entity_category: diagnostic
     state_class: measurement
 
@@ -272,18 +281,41 @@ sensor:
     entity_category: diagnostic
     state_class: measurement
 
-  # ERD documentation calls this "Appliance Cumulative Energy". Live RE2H50S10
-  # discovery confirms the appliance returns a 4-byte big-endian value. Its
-  # semantics/unit still need validation, so do not label it as power yet.
+  # Public ERD metadata calls D007 "Appliance Cumulative Energy", but live
+  # RE2H50S10 captures show that the first big-endian uint16 tracks
+  # instantaneous watts: ~326-401 W with compressor/fan and ~4.4-4.8 kW with
+  # the resistance element. Keep the trailing uint16 separately for further
+  # reverse engineering; its meaning is not yet known.
   - platform: gea
     gea_id: gea_hub
-    id: d007_raw
-    name: "D007 Appliance Energy Raw"
+    id: power
+    name: "Power"
     erd: 0xD007
-    decode: uint32_be
+    decode: uint16_be
+    accuracy_decimals: 0
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "D007 Trailing Word Raw"
+    erd: 0xD007
+    decode: uint16_be
+    byte_offset: 2
     accuracy_decimals: 0
     entity_category: diagnostic
     state_class: measurement
+
+  - platform: total_daily_energy
+    name: "Total Daily Energy"
+    power_id: power
+    unit_of_measurement: "kWh"
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
 
 
   - platform: gea
