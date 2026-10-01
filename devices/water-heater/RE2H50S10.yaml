@@ -14,6 +14,12 @@
 # - reported ERDs at the bottom, with brief comments
 # - success with first build adapter (burkemw3) and mulcmu adapter (mannkind)
 # - mannkind did initial work in https://community.home-assistant.io/t/water-heater-bradford-white/588528/25, burkemw3 did polishing
+# - Bradford White service references used for thermistor/component labels:
+#   - RE2H quick service guide: https://docs.bradfordwhite.com/Quick_Service_Guide/238-52395-00_A.pdf
+#   - AeroTherm G2 quick service guide: https://docs.bradfordwhite.com/Quick_Service_Guide/238-55219-00_Current.pdf
+# - The RE2H guide documents T2/T3a/T3b/T4/T5. The newer G2 guide additionally
+#   identifies T1 as the lower tank sensor and T2 as the upper tank sensor.
+#   T1's physical role on RE2H50S10 still needs live validation; T6 remains undocumented.
 
 # GEA2 discovery complete — 44 ERDs responded out of 2445 scanned
 # Copy the ERDs below into your YAML to build your configuration:
@@ -36,19 +42,19 @@
 #   0x404A  # Max allowed standard electric hours - haven't checked
 #   0x404C  # Anode depleted mass - reported zeroes, probably doesn't work
 #   0x404D  # Anode hours of service - reported zeroes, probably doesn't work
-#   0x4056  # Diagnostic Failure counts - haven't checked
+#   0x4056  # Diagnostic Failure counts - service mode exposes per-fault counters; ERD byte-to-fault mapping still needs validation
 #   0x4058  # Heating Issues - haven't checked
-#   0x405F  # T1 Temperature - haven't checked
-#   0x4060  # T2 Temperature - mannkind called this ambinent, I went with it, looks plausible
-#   0x4061  # T3a Temperature - haven't checked
-#   0x4062  # T3b Temperature - haven't checked
-#   0x4063  # T4 Temperature - haven't checked
-#   0x4064  # T5 Temperature - mannkind called this ambinent, I went with it, looks plausible
+#   0x405F  # T1 Temperature - exposed for validation; newer AeroTherm G2 docs identify T1 as lower tank, but RE2H docs do not list T1
+#   0x4060  # T2 Temperature - tank (water) temperature per RE2H service guide; newer G2 docs identify T2 as upper tank
+#   0x4061  # T3a Temperature - evaporator inlet temperature per Bradford White service guide
+#   0x4062  # T3b Temperature - evaporator outlet temperature per Bradford White service guide
+#   0x4063  # T4 Temperature - compressor discharge/outlet temperature per Bradford White service guide
+#   0x4064  # T5 Temperature - ambient air temperature per Bradford White service guide
 #   0x4065  # Measured current - looks correct
 #   0x4066  # Measured voltage - looks slightly high, but correct
-#   0x4068  # Relay status - looks correct
+#   0x4068  # Relay status - existing bits map compressor, upper/lower elements and fan; matches service-mode component list
 #   0x4069  # Flow state - reported zeroes, probably doesn't work
-#   0x406E  # T6 Temperature - haven't checked
+#   0x406E  # T6 Temperature - responds on RE2H50S10 but is not identified in the Bradford White service thermistor tables; exposed for validation
 #   0x4081  # Anode alarm active - haven't checked, doubt it works since other anode checks don't
 #   0x4082  # Accessory low battery alarm active - haven't checked
 #   0x4083  # Accessory leak detected alarm active - haven't checked
@@ -121,13 +127,32 @@ gea:
   erd_lookup: true
 
 sensor:
-  # Raw command equivalent: 0xDE 0x10 (Request Current Status) byte 2, uint8 °F,
-  # or 0x56 (Hyper Terminal Data) bytes 5-6, °F x10
+  # Temperature ERDs use signed 16-bit values in °F x10.
+  #
+  # T1 is not listed in the RE2H quick-service thermistor table. The newer
+  # AeroTherm G2 guide identifies T1 as the lower tank sensor, so expose it
+  # here under its neutral T1 name until that physical mapping is confirmed
+  # on an RE2H50S10.
   - platform: gea
     gea_id: gea_hub
-    name: "Tank Temperature"
+    name: "T1 Temperature"
+    id: t1_temperature
+    erd: 0x405F
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    state_class: measurement
+    device_class: temperature
+
+  # RE2H service mode calls T2 the tank (water) temperature. The newer
+  # AeroTherm G2 guide further identifies T2 as the upper tank sensor.
+  # Raw command equivalent: 0xDE 0x10 (Request Current Status) byte 2, uint8 °F,
+  # or 0x56 (Hyper Terminal Data) bytes 5-6, °F x10.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Tank Temperature (T2)"
     id: tank_temperature
-    internal: true
     erd: 0x4060
     decode: int16_be
     multiplier: 0.1
@@ -135,6 +160,74 @@ sensor:
     unit_of_measurement: "°F"
     state_class: measurement
     device_class: temperature
+
+  # T3a — evaporator inlet temperature.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Evaporator Inlet Temperature (T3a)"
+    erd: 0x4061
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    state_class: measurement
+    device_class: temperature
+    entity_category: diagnostic
+
+  # T3b — evaporator outlet temperature.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Evaporator Outlet Temperature (T3b)"
+    erd: 0x4062
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    state_class: measurement
+    device_class: temperature
+    entity_category: diagnostic
+
+  # T4 — compressor discharge/outlet temperature.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Compressor Discharge Temperature (T4)"
+    erd: 0x4063
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    state_class: measurement
+    device_class: temperature
+    entity_category: diagnostic
+
+  # T5 — ambient air temperature.
+  # Raw command equivalent: 0x56 (Hyper Terminal Data) bytes 13-14, °F x10.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Ambient Temperature (T5)"
+    erd: 0x4064
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+
+  # T6 responds on this appliance but is not present in the Bradford White
+  # RE2H or G2 service thermistor tables. Keep the label neutral until a live
+  # correlation identifies its physical meaning.
+  - platform: gea
+    gea_id: gea_hub
+    name: "T6 Temperature"
+    erd: 0x406E
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    entity_category: diagnostic
+
   # erd docs say cumulative energy in Wh, but empirically, this is power
   - platform: gea
     gea_id: gea_hub
@@ -164,17 +257,6 @@ sensor:
     erd: 0x4028
     decode: uint16_be
     unit_of_measurement: "h"
-  # Raw command equivalent: 0x56 (Hyper Terminal Data) bytes 13-14, T5 °F x10
-  - platform: gea
-    gea_id: gea_hub
-    name: "Ambient Temperature"
-    erd: 0x4064
-    decode: int16_be
-    multiplier: 0.1
-    accuracy_decimals: 1
-    unit_of_measurement: "°F"
-    device_class: temperature
-    state_class: measurement
   # Raw command equivalent: 0xDE 0x10 (Request Current Status) byte 3, uint8 °F.
   # Differs from the user setpoint while in Vacation or Demand Response.
   - platform: gea
@@ -295,6 +377,8 @@ number:
     step: 1
     unit_of_measurement: "°F"
 binary_sensor:
+  # ERD 0x4068 mirrors the service-mode heating component status: lower
+  # element, upper element, compressor (with fan), and fan.
   - platform: template
     name: "GEA Bus Connected"
     entity_category: diagnostic
