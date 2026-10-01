@@ -220,7 +220,7 @@ sensor:
     gea_id: gea_hub
     name: "T6 Temperature"
     erd: 0x406E
-    decode: int16_be
+    decode: uint16_be
     multiplier: 0.1
     accuracy_decimals: 1
     unit_of_measurement: "°F"
@@ -257,6 +257,17 @@ sensor:
     name: "Relay Status Raw"
     erd: 0x4068
     decode: uint16_be
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    state_class: measurement
+
+  # Flow state is a one-byte enum on RE2H50S10. Expose the raw value until
+  # the enum meanings have been validated against real water-flow events.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Flow State Raw"
+    erd: 0x4069
+    decode: uint8
     accuracy_decimals: 0
     entity_category: diagnostic
     state_class: measurement
