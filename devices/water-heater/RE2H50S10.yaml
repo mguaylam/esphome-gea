@@ -228,29 +228,20 @@ sensor:
     state_class: measurement
     entity_category: diagnostic
 
-  # erd docs say cumulative energy in Wh, but empirically, this is power
+  # ERD documentation calls this "Appliance Cumulative Energy". Live RE2H50S10
+  # discovery confirms the appliance returns a 4-byte big-endian value. Its
+  # semantics/unit still need validation, so do not label it as power yet.
   - platform: gea
     gea_id: gea_hub
-    id: power
-    name: "Power"
+    id: d007_raw
+    name: "D007 Appliance Energy Raw"
     erd: 0xD007
-    decode: uint16_be # despite ERD docs, this matches burkemw3's observations
+    decode: uint32_be
     accuracy_decimals: 0
-    unit_of_measurement: "W"
-    device_class: power
+    entity_category: diagnostic
     state_class: measurement
 
-  - platform: total_daily_energy
-    name: "Total Daily Energy"
-    power_id: power
-    unit_of_measurement: "kWh"
-    state_class: total_increasing
-    device_class: energy
-    accuracy_decimals: 3
-    filters:
-      - multiply: 0.001
-  # Raw command equivalent: 0xDE 0x10 (Request Current Status) byte 1,
-  # vacation days remaining (the ERD API tracks hours, not days)
+
   - platform: gea
     gea_id: gea_hub
     name: "Timed Mode Hours Remaining"
