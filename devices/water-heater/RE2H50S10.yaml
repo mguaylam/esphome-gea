@@ -228,6 +228,39 @@ sensor:
     state_class: measurement
     entity_category: diagnostic
 
+  # Live electrical telemetry. Exposed as diagnostics while we correlate
+  # these values with D007 and relay state under known loads.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Measured Current"
+    erd: 0x4065
+    decode: uint16_be
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    state_class: measurement
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Measured Voltage"
+    erd: 0x4066
+    decode: uint16_be
+    accuracy_decimals: 0
+    unit_of_measurement: "V"
+    device_class: voltage
+    entity_category: diagnostic
+    state_class: measurement
+
+  # Raw two-byte relay bitfield. Existing binary sensors below decode byte 1:
+  # compressor=0x02, upper element=0x04, lower element=0x08, fan=0x10.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Relay Status Raw"
+    erd: 0x4068
+    decode: uint16_be
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    state_class: measurement
+
   # ERD documentation calls this "Appliance Cumulative Energy". Live RE2H50S10
   # discovery confirms the appliance returns a 4-byte big-endian value. Its
   # semantics/unit still need validation, so do not label it as power yet.
