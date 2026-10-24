@@ -20,7 +20,6 @@
 # - The RE2H guide documents T2/T3a/T3b/T4/T5. The newer G2 guide additionally
 #   identifies T1 as the lower tank sensor and T2 as the upper tank sensor.
 #   Live RE2H50S10 readings are consistent with T1 as the lower tank sensor.
-#   T6 remains undocumented; this unit reports 0xFFFF when it is unavailable.
 
 # GEA2 discovery complete — 44 ERDs responded out of 2445 scanned
 # Copy the ERDs below into your YAML to build your configuration:
@@ -55,7 +54,7 @@
 #   0x4066  # Measured voltage - looks slightly high, but correct
 #   0x4068  # Relay status - existing bits map compressor, upper/lower elements and fan; matches service-mode component list
 #   0x4069  # Flow state - live enum changes (observed 0x00 and 0x03); exact meanings still need validation
-#   0x406E  # T6 Temperature - undocumented; this RE2H50S10 currently returns 0xFFFF (unavailable)
+#   0x406E  # T6 Temperature - observed 0xFFFF (unavailable); not exposed
 #   0x4081  # Anode alarm active - haven't checked, doubt it works since other anode checks don't
 #   0x4082  # Accessory low battery alarm active - haven't checked
 #   0x4083  # Accessory leak detected alarm active - haven't checked
@@ -212,27 +211,6 @@ sensor:
     unit_of_measurement: "°F"
     device_class: temperature
     state_class: measurement
-
-  # T6 responds on this appliance but is not present in the Bradford White
-  # RE2H or G2 service thermistor tables. Keep the label neutral until a live
-  # correlation identifies its physical meaning.
-  - platform: gea
-    gea_id: gea_hub
-    name: "T6"
-    erd: 0x406E
-    decode: uint16_be
-    multiplier: 0.1
-    accuracy_decimals: 1
-    unit_of_measurement: "°F"
-    device_class: temperature
-    state_class: measurement
-    entity_category: diagnostic
-    # 0xFFFF is the appliance's unavailable/not-present sentinel for T6.
-    filters:
-      - lambda: |-
-          if (x > 6500.0f)
-            return NAN;
-          return x;
 
   # Live electrical telemetry. Exposed as diagnostics while we correlate
   # these values with D007 and relay state under known loads.
