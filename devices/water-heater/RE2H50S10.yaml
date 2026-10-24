@@ -53,7 +53,7 @@
 #   0x4065  # Measured current - uint16 x0.1 A; validated against voltage and D007 under compressor and resistance loads
 #   0x4066  # Measured voltage - looks slightly high, but correct
 #   0x4068  # Relay status - existing bits map compressor, upper/lower elements and fan; matches service-mode component list
-#   0x4069  # Flow state - live enum changes (observed 0x00 and 0x03); exact meanings still need validation
+#   0x4069  # Flow state - observed 0x00, 0x01, 0x02, 0x03, and 0x07; combined-state meanings still need validation
 #   0x406E  # T6 Temperature - observed 0xFFFF (unavailable); not exposed
 #   0x4081  # Anode alarm active - haven't checked, doubt it works since other anode checks don't
 #   0x4082  # Accessory low battery alarm active - haven't checked
