@@ -216,7 +216,7 @@ sensor:
   # these values with D007 and relay state under known loads.
   - platform: gea
     gea_id: gea_hub
-    name: "Measured Current"
+    name: "Current"
     erd: 0x4065
     decode: uint16_be
     multiplier: 0.1
@@ -228,7 +228,7 @@ sensor:
 
   - platform: gea
     gea_id: gea_hub
-    name: "Measured Voltage"
+    name: "Voltage"
     erd: 0x4066
     decode: uint16_be
     accuracy_decimals: 0
