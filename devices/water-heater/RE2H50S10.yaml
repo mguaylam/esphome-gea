@@ -135,7 +135,7 @@ sensor:
   # RE2H50S10 behavior is consistent with that mapping.
   - platform: gea
     gea_id: gea_hub
-    name: "Lower Tank Temperature (T1)"
+    name: "Lower Tank Temperature"
     id: t1_temperature
     erd: 0x405F
     decode: int16_be
@@ -151,7 +151,7 @@ sensor:
   # or 0x56 (Hyper Terminal Data) bytes 5-6, °F x10.
   - platform: gea
     gea_id: gea_hub
-    name: "Tank Temperature (T2)"
+    name: "Tank Temperature"
     id: tank_temperature
     erd: 0x4060
     decode: int16_be
@@ -164,7 +164,7 @@ sensor:
   # T3a — evaporator inlet temperature.
   - platform: gea
     gea_id: gea_hub
-    name: "Evaporator Inlet Temperature (T3a)"
+    name: "Evaporator Inlet Temperature"
     erd: 0x4061
     decode: int16_be
     multiplier: 0.1
@@ -177,7 +177,7 @@ sensor:
   # T3b — evaporator outlet temperature.
   - platform: gea
     gea_id: gea_hub
-    name: "Evaporator Outlet Temperature (T3b)"
+    name: "Evaporator Outlet Temperature"
     erd: 0x4062
     decode: int16_be
     multiplier: 0.1
@@ -190,7 +190,7 @@ sensor:
   # T4 — compressor discharge/outlet temperature.
   - platform: gea
     gea_id: gea_hub
-    name: "Compressor Discharge Temperature (T4)"
+    name: "Compressor Discharge Temperature"
     erd: 0x4063
     decode: int16_be
     multiplier: 0.1
@@ -204,7 +204,7 @@ sensor:
   # Raw command equivalent: 0x56 (Hyper Terminal Data) bytes 13-14, °F x10.
   - platform: gea
     gea_id: gea_hub
-    name: "Ambient Temperature (T5)"
+    name: "Ambient Temperature"
     erd: 0x4064
     decode: int16_be
     multiplier: 0.1
@@ -218,7 +218,7 @@ sensor:
   # correlation identifies its physical meaning.
   - platform: gea
     gea_id: gea_hub
-    name: "T6 Temperature"
+    name: "T6"
     erd: 0x406E
     decode: uint16_be
     multiplier: 0.1
@@ -261,6 +261,7 @@ sensor:
 
   # Raw two-byte relay bitfield. Existing binary sensors below decode byte 1:
   # compressor=0x02, upper element=0x04, lower element=0x08, fan=0x10.
+  # No measurement state class: averaging bitfield values is not meaningful.
   - platform: gea
     gea_id: gea_hub
     name: "Relay Status Raw"
@@ -268,10 +269,10 @@ sensor:
     decode: uint16_be
     accuracy_decimals: 0
     entity_category: diagnostic
-    state_class: measurement
 
   # Flow state is a one-byte enum on RE2H50S10. Expose the raw value until
   # the enum meanings have been validated against real water-flow events.
+  # No measurement state class: averaging categorical codes is not meaningful.
   - platform: gea
     gea_id: gea_hub
     name: "Flow State Raw"
@@ -279,7 +280,6 @@ sensor:
     decode: uint8
     accuracy_decimals: 0
     entity_category: diagnostic
-    state_class: measurement
 
   # Public ERD metadata calls D007 "Appliance Cumulative Energy", but live
   # RE2H50S10 captures show that the first big-endian uint16 tracks
@@ -297,6 +297,7 @@ sensor:
     device_class: power
     state_class: measurement
 
+  # The trailing word is raw data with no established measurement semantics.
   - platform: gea
     gea_id: gea_hub
     name: "D007 Trailing Word Raw"
@@ -305,7 +306,6 @@ sensor:
     byte_offset: 2
     accuracy_decimals: 0
     entity_category: diagnostic
-    state_class: measurement
 
   - platform: total_daily_energy
     name: "Total Daily Energy"
