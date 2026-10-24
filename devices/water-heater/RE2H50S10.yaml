@@ -298,7 +298,6 @@ sensor:
     name: "Actual Setpoint"
     erd: 0x4026
     decode: int16_be
-    internal: true
     multiplier: 0.1
     accuracy_decimals: 1
     unit_of_measurement: "°F"
