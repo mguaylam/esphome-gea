@@ -52,7 +52,7 @@
 #   0x4064  # T5 Temperature - ambient air temperature per Bradford White service guide
 #   0x4065  # Measured current - uint16 x0.1 A; validated against voltage and D007 under compressor and resistance loads
 #   0x4066  # Measured voltage - looks slightly high, but correct
-#   0x4068  # Relay status - existing bits map compressor, upper/lower elements and fan; matches service-mode component list
+#   0x4068  # Relay status - DLB, compressor, upper/lower elements and fan
 #   0x4069  # Flow state - observed 0x00, 0x01, 0x02, 0x03, and 0x07; combined-state meanings still need validation
 #   0x406E  # T6 Temperature - observed 0xFFFF (unavailable); not exposed
 #   0x4081  # Anode alarm active - haven't checked, doubt it works since other anode checks don't
@@ -237,17 +237,6 @@ sensor:
     entity_category: diagnostic
     state_class: measurement
 
-  # Raw two-byte relay bitfield. Existing binary sensors below decode byte 1:
-  # compressor=0x02, upper element=0x04, lower element=0x08, fan=0x10.
-  # No measurement state class: averaging bitfield values is not meaningful.
-  - platform: gea
-    gea_id: gea_hub
-    name: "Relay Status Raw"
-    erd: 0x4068
-    decode: uint16_be
-    accuracy_decimals: 0
-    entity_category: diagnostic
-
   # Flow state is a one-byte enum on RE2H50S10. Expose the raw value until
   # the enum meanings have been validated against real water-flow events.
   # No measurement state class: averaging categorical codes is not meaningful.
@@ -422,12 +411,22 @@ number:
     step: 1
     unit_of_measurement: "°F"
 binary_sensor:
-  # ERD 0x4068 mirrors the service-mode heating component status: lower
-  # element, upper element, compressor (with fan), and fan.
+  # ERD 0x4068 is a two-byte relay bitfield. All five named flags are in
+  # byte 1: DLB=0x01, compressor=0x02, upper=0x04, lower=0x08, fan=0x10.
   - platform: template
     name: "GEA Bus Connected"
     entity_category: diagnostic
     lambda: 'return id(gea_hub).is_bus_connected();'
+  # DLB means Double Line Break: a separate line-switching relay.
+  # Its reported status alone does not indicate active heating.
+  - platform: gea
+    gea_id: gea_hub
+    id: dlb_on
+    name: "DLB Relay"
+    erd: 0x4068
+    bitmask: 0x01
+    byte_offset: 1
+    entity_category: diagnostic
   - platform: gea
     gea_id: gea_hub
     id: compressor_on
