@@ -24,7 +24,7 @@ jobs:
             cat > "${dir}secrets.yaml" << 'EOF'
           wifi_ssid: "ci-network"
           wifi_password: "ci-password"
-          api_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          api_key: "Y2ktZHVtbXktYXBpLWtleS1ub3QtYS1zZWNyZXQtMDA="  # any non-zero 32-byte key; ESPHome rejects all-zeros
           ota_password: "ci-password"
           ap_password: "ci-password"
           EOF
