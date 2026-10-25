@@ -152,6 +152,7 @@ Complete configurations for known appliances:
 | File | Appliance | Highlights |
 |------|-----------|------------|
 | [`PDP715SYV0FS.yaml`](devices/dishwasher/PDP715SYV0FS.yaml) | GE PDP715SYV0FS dishwasher | Cycle selection, elapsed time, ASCII cycle name, model retrieval |
+| [`GDT695SBL3TS.yaml`](devices/dishwasher/GDT695SBL3TS.yaml) | GE GDT695SBL3TS dishwasher | GEA2 bus at 0x40, cycle, wash temp, zone, steam, dry, rinse aid, mute and delay controls via bit-level writes to 0x3007, derived cycle progress (full ERD scan documented) |
 | [`PFQ97HSPVDS.yaml`](devices/washer/PFQ97HSPVDS.yaml) | GE PFQ97HSPVDS Ultrafast Combo | Time remaining, door/lock/pump sensors, 200+ cycle options, remote start/stop, dosing |
 | [`RE2H50S10.yaml`](devices/water-heater/RE2H50S10.yaml) | Bradford White AeroTherm heat pump water heater | GEA2 bus, water_heater template with °F↔°C conversion, heat pump / hybrid / vacation modes |
 | [`PH65S10BPY.yaml`](devices/water-heater/PH65S10BPY.yaml) | GE Profile GeoSpring PH65S10BPY Smart Hybrid Heat Pump Water Heater | GEA3 bus, hybrid / heat pump / electric / high demand / vacation modes |
