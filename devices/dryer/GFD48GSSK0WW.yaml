@@ -1,0 +1,288 @@
+# ESPHome config for a GE gas dryer via GEA2 — read-only by the dryer's own design
+# Appliance: GE GFD48GSSK0WW (front-load gas dryer)
+# Hardware: FirstBuild "GE Appliances Home Assistant Adapter" (Seeed XIAO ESP32-C3 on a carrier that routes the
+#   RJ45 jack's serial line to GPIO9/GPIO10 and powers the board from the jack)
+# Framework: ESP-IDF
+# Baud rate: 19200 (GEA2)
+# TX = GPIO9, RX = GPIO10
+#
+# Findings worth not rediscovering:
+# - This dryer is GEA2, not GEA3. GE's official adapter firmware (geappliances/home-assistant-adapter) is
+#   GEA3-only: it subscribes to 0xC0 and retries forever. The hub's GEA2 mode at 19200 talks to it.
+# - The control board answers at bus address 0x24, not GE's usual 0xC0; it is pinned below. Unpin it to let
+#   the hub rediscover; the Bus Address diagnostic shows whatever is in use.
+# - The board answers exactly the ERDs declared below and nothing else. A full scan of all 2445 documented
+#   ERDs, plus a retried probe of every documented dryer write/option/manifest ERD (0x0092-0x0094,
+#   0x2038-0x20DF including 0x20CD "RJ45 write access"), got no reply. There is nothing to write to over this
+#   port; the dryer is read-only.
+# - ERD meanings: geappliances/public-appliance-api-documentation (appliance_api_erd_definitions.json).
+esphome:
+  name: ge-dryer
+  friendly_name: GE Dryer
+  comment: GE GFD48GSSK0WW via the FirstBuild GEA adapter
+  project:
+    name: GE.GFD48GSSK0WW
+    version: "1.0.0"
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2
+  ap:
+    ssid: "ge-dryer fallback"
+    password: !secret ap_password
+  on_connect:
+    - output.turn_on: led_wifi
+  on_disconnect:
+    - output.turn_off: led_wifi
+
+captive_portal:
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+  on_client_connected:
+    - output.turn_on: led_ha
+    - lambda: 'id(gea_hub).log_address();'   # the boot-time discovery line scrolls by before a log client attaches; reprint it
+  on_client_disconnected:
+    - output.turn_off: led_ha
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [gea]
+
+# Carrier-board LEDs (XIAO D0/D1/D2): heartbeat, HA link, WiFi — same three GE's firmware drives.
+status_led:
+  pin: GPIO2
+
+output:
+  - platform: gpio
+    pin: GPIO3
+    id: led_ha
+  - platform: gpio
+    pin: GPIO4
+    id: led_wifi
+
+uart:
+  id: uart_gea
+  tx_pin: GPIO9
+  rx_pin: GPIO10
+  baud_rate: 19200
+
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  protocol: gea2
+  dest_address: 0x24        # this dryer's control board (discovered 2026-09-06; NOT GE's usual 0xC0). Pinned so boot never probes.
+  poll_interval: 500ms      # 11 ERDs -> ~5.5 s per full refresh, bus mostly idle
+  erd_lookup: true          # boot log names every ERD it sees
+
+text_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: State
+    erd: 0x2000
+    decode: uint8
+    icon: mdi:tumble-dryer
+    options:
+      0x00: Idle
+      0x01: Standby
+      0x02: Running
+      0x03: Paused
+      0x04: End of Cycle
+      0x05: Delay Run
+      0x06: Delay Run
+      0x07: Delay Pause
+      0x09: Commissioning
+  - platform: gea
+    gea_id: gea_hub
+    name: Phase
+    erd: 0x2001
+    decode: uint8
+    icon: mdi:progress-clock
+    options:
+      0x00: Not Running
+      0x09: Tumble
+      0x80: Drying
+      0x81: Mist Steam
+      0x82: Cool Down
+      0x83: Extended Tumble
+      0x84: Damp
+      0x85: Air Fluff
+      0x86: Sensing
+      0x88: Wrinkle Free
+      0x89: Preparing
+      0x8A: Steaming
+      0x8B: Sanitizing
+      0x8D: Load Sensing
+  - platform: gea
+    gea_id: gea_hub
+    name: Cycle
+    erd: 0x200A
+    decode: uint8
+    icon: mdi:tumble-dryer
+    options:
+      0x00: Not Selected
+      0x04: Bulky Items
+      0x05: Sanitize
+      0x06: Towels or Sheets
+      0x08: Normal or Mixed Load
+      0x0D: Delicates
+      0x0E: Speed Wash
+      0x0F: Heavy Duty
+      0x1C: Normal
+      0x20: Towels
+      0x2D: Sheets
+      0x80: Cottons
+      0x81: Easy Care
+      0x82: Active Wear
+      0x83: Timed Dry
+      0x84: Dewrinkle
+      0x85: Quick or Air Fluff
+      0x86: Steam Refresh
+      0x87: Steam Dewrinkle
+      0x88: Speed Dry
+      0x89: Mixed
+      0x8A: Quick Dry
+      0x8B: Casuals
+      0x8C: Warm Up
+      0x8D: Energy Saver
+      0x8E: Antibacterial
+      0x8F: Rack Dry
+      0x90: Baby Care
+      0x91: Auto Dry
+      0x92: Auto Extra Dry
+      0x93: Perm Press
+      0x94: Washer Link
+      0x95: Auto Damp Dry
+      0x96: Smart Vent
+      0x98: Hygiene
+      0x99: Cool Air
+      0x9B: Ultra Delicate
+      0x9D: Sanitize Steam
+      0x9E: Durable
+      0x9F: Shoes
+      0xA0: Shirts
+      0xA1: Refresh
+      0xA5: Leather
+      0xA6: Outerwear
+      0xB6: Down
+      0xB7: Night Dry
+      0xB9: Blocked Vent
+      0xBA: King Size Comforter
+      0xFE: Remote Selection
+  - platform: gea
+    gea_id: gea_hub
+    name: Cycle Type
+    erd: 0x201C
+    decode: uint8
+    icon: mdi:water-percent
+    options:
+      0x00: Sensor Dry
+      0x01: Timed Dry
+      0x02: Mist Steam
+  - platform: gea
+    gea_id: gea_hub
+    name: Model
+    erd: 0x0001
+    decode: ascii
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: Serial Number
+    erd: 0x0002
+    decode: ascii
+    entity_category: diagnostic
+  # Bus health (component accessors — docs/diagnostics.md). The address is what to pin as dest_address.
+  - platform: template
+    name: Bus Address
+    entity_category: diagnostic
+    icon: mdi:map-marker
+    update_interval: 60s
+    lambda: |-
+      if(!id(gea_hub).is_address_resolved()) return {"unresolved"};
+      char buf[8]; snprintf(buf, sizeof(buf), "0x%02X", id(gea_hub).get_dest_address());
+      return {std::string(buf)};
+
+sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: Remaining Time
+    erd: 0x2007
+    decode: uint16_be
+    multiplier: 0.0166667      # seconds -> minutes
+    accuracy_decimals: 0
+    unit_of_measurement: min
+    device_class: duration
+    state_class: measurement
+    icon: mdi:timer-outline
+  - platform: gea
+    gea_id: gea_hub
+    name: Delay Remaining
+    erd: 0x2010
+    decode: uint16_be
+    accuracy_decimals: 0
+    unit_of_measurement: min
+    device_class: duration
+    icon: mdi:timer-sand
+  - platform: template
+    name: Dropped Requests
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    state_class: total_increasing
+    update_interval: 60s
+    lambda: 'return id(gea_hub).get_dropped_requests();'
+  - platform: template
+    name: Bus Collisions
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    state_class: total_increasing
+    update_interval: 60s
+    lambda: 'return id(gea_hub).get_tx_collisions();'
+
+binary_sensor:
+  - platform: template
+    name: Bus Connected
+    entity_category: diagnostic
+    device_class: connectivity
+    lambda: 'return id(gea_hub).is_bus_connected();'
+  - platform: gea
+    gea_id: gea_hub
+    name: Door
+    erd: 0x2012
+    bitmask: 0x01           # 0x01 = closed
+    inverted: true          # door class: ON = open
+    device_class: door
+  - platform: gea
+    gea_id: gea_hub
+    name: Cycle Complete
+    erd: 0x2002
+    bitmask: 0x01
+    icon: mdi:check-circle-outline
+  - platform: gea
+    gea_id: gea_hub
+    name: Extended Tumble
+    erd: 0x201B
+    bitmask: 0x01
+    icon: mdi:rotate-3d-variant
+    entity_category: diagnostic
+
+
+button:
+  - platform: restart
+    name: Restart
+    entity_category: diagnostic
