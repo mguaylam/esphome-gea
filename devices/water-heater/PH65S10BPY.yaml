@@ -1,6 +1,10 @@
 # ============================================================================
 # GE PH65S10BPY01 — GEA3 ERD REFERENCE
-# Serial: GD600230X
+# Appliance: GE Profile GeoSpring Smart Hybrid Heat Pump Water Heater, 65 gal
+# Hardware: Seeed XIAO ESP32-C3 on the FirstBuild carrier board (RJ45 breakout)
+# Framework: ESP-IDF
+# Baud rate: 230400 (GEA3)
+# TX = GPIO21 (D6), RX = GPIO20 (D7)
 #
 # Discovered from the heater's GEA3 ERD lookup.
 # Raw values/decodings noted where established.
@@ -11,7 +15,6 @@
 #         PH65S10BPY01
 #
 # 0x0002  Serial Number
-#         GD600230X
 #
 # 0x0007  Temperature Display Units
 #         0 = Fahrenheit
@@ -319,6 +322,9 @@ substitutions:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
+  project:
+    name: GE.PH65S10BPY
+    version: "1.0.0"
 
 esp32:
   board: seeed_xiao_esp32c3
@@ -328,16 +334,26 @@ esp32:
 logger:
 
 api:
+  encryption:
+    key: !secret api_key
 
 ota:
   - platform: esphome
+    password: !secret ota_password
 
 wifi:
   ssid: !secret wifi_ssid
-  password: !secret wifi_ssid_password
+  password: !secret wifi_password
+  ap:
+    ssid: "${name} fallback"
+    password: !secret ap_password
+
+captive_portal:
 
 external_components:
-  - source: github://mguaylam/esphome-gea
+  - source:
+      type: local
+      path: ../../components
     components: [gea]
 
 # ============================================================
@@ -833,7 +849,7 @@ number:
     max_value: 4776
     step: 1
     unit_of_measurement: "h"
-    
+
 select:
 
   # ----------------------------------------------------------
