@@ -125,7 +125,7 @@ since the per-frame output is high-volume.
 | Level | What the GEA component emits | When to use it |
 |-------|------------------------------|----------------|
 | `ERROR` | *(none today)* | — |
-| `WARN` | CRC mismatch, ERD read/write failed (`result != 0`), request dropped after exhausting retries, subscribe-all rejected, unexpected response shape, discovery cap reached, GEA2 TX echo missing (wiring fault) | Always visible — anomalies worth attention |
+| `WARN` | CRC mismatch, ERD read/write failed (`result != 0`), request dropped after exhausting retries, subscribe-all rejected, unexpected response shape, discovery cap reached, GEA2 TX echo missing (wiring fault), GEA2 TX echo never verified (non-conforming adapter) | Always visible — anomalies worth attention |
 | `INFO` | ERD values read, auto-detected appliance address, subscription state changes, discovery progress/results, poll list built | Useful default in normal operation |
 | `CONFIG` | Configuration dump at boot (`dump_config`) | Startup only |
 | `DEBUG` *(default)* | STX / valid-packet markers, "ignoring packet" from another node, 10 s RX stats (includes the TX collision count on GEA2), write OK, retry on timeout, GEA2 collision detected + fast retry | Routine diagnostics |
@@ -139,6 +139,13 @@ when it never arrives (wiring fault). An echoed frame that slips past the
 matcher is still identified by its source address matching our own and dropped
 at `VERBOSE` — it does not count toward bus liveness and is not treated as
 foreign traffic.
+
+If no full echo has matched after the first few transmitted frames, the wiring
+does not return the echo at all (or returns it truncated). That is reported with
+a `WARN`, repeated every 10 minutes so it stays visible in a rotating log. The
+component keeps polling in that state, but collision detection is unavailable
+and each exchange pays a retry it should not need — see the hardware baseline in
+[Protocol & internals](protocol.md).
 
 ## See also
 
