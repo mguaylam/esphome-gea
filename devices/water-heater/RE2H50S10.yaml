@@ -14,6 +14,12 @@
 # - reported ERDs at the bottom, with brief comments
 # - success with first build adapter (burkemw3) and mulcmu adapter (mannkind)
 # - mannkind did initial work in https://community.home-assistant.io/t/water-heater-bradford-white/588528/25, burkemw3 did polishing
+# - Bradford White service references used for thermistor/component labels:
+#   - RE2H quick service guide: https://docs.bradfordwhite.com/Quick_Service_Guide/238-52395-00_A.pdf
+#   - AeroTherm G2 quick service guide: https://docs.bradfordwhite.com/Quick_Service_Guide/238-55219-00_Current.pdf
+# - The RE2H guide documents T2/T3a/T3b/T4/T5. The newer G2 guide additionally
+#   identifies T1 as the lower tank sensor and T2 as the upper tank sensor.
+#   Live RE2H50S10 readings are consistent with T1 as the lower tank sensor.
 
 # GEA2 discovery complete — 44 ERDs responded out of 2445 scanned
 # Copy the ERDs below into your YAML to build your configuration:
@@ -36,19 +42,19 @@
 #   0x404A  # Max allowed standard electric hours - haven't checked
 #   0x404C  # Anode depleted mass - reported zeroes, probably doesn't work
 #   0x404D  # Anode hours of service - reported zeroes, probably doesn't work
-#   0x4056  # Diagnostic Failure counts - haven't checked
+#   0x4056  # Diagnostic Failure counts - service mode exposes per-fault counters; ERD byte-to-fault mapping still needs validation
 #   0x4058  # Heating Issues - haven't checked
-#   0x405F  # T1 Temperature - haven't checked
-#   0x4060  # T2 Temperature - mannkind called this ambinent, I went with it, looks plausible
-#   0x4061  # T3a Temperature - haven't checked
-#   0x4062  # T3b Temperature - haven't checked
-#   0x4063  # T4 Temperature - haven't checked
-#   0x4064  # T5 Temperature - mannkind called this ambinent, I went with it, looks plausible
-#   0x4065  # Measured current - looks correct
+#   0x405F  # T1 Temperature - lower tank sensor; mapping matches newer AeroTherm G2 docs and live RE2H50S10 behavior
+#   0x4060  # T2 Temperature - tank (water) temperature per RE2H service guide; newer G2 docs identify T2 as upper tank
+#   0x4061  # T3a Temperature - evaporator inlet temperature per Bradford White service guide
+#   0x4062  # T3b Temperature - evaporator outlet temperature per Bradford White service guide
+#   0x4063  # T4 Temperature - compressor discharge/outlet temperature per Bradford White service guide
+#   0x4064  # T5 Temperature - ambient air temperature per Bradford White service guide
+#   0x4065  # Measured current - uint16 x0.1 A; validated against voltage and D007 under compressor and resistance loads
 #   0x4066  # Measured voltage - looks slightly high, but correct
-#   0x4068  # Relay status - looks correct
-#   0x4069  # Flow state - reported zeroes, probably doesn't work
-#   0x406E  # T6 Temperature - haven't checked
+#   0x4068  # Relay status - DLB, compressor, upper/lower elements and fan
+#   0x4069  # Flow state - observed 0x00, 0x01, 0x02, 0x03, and 0x07; combined-state meanings still need validation
+#   0x406E  # T6 Temperature - observed 0xFFFF (unavailable); not exposed
 #   0x4081  # Anode alarm active - haven't checked, doubt it works since other anode checks don't
 #   0x4082  # Accessory low battery alarm active - haven't checked
 #   0x4083  # Accessory leak detected alarm active - haven't checked
@@ -60,7 +66,7 @@
 #   0x6003  # Wireless Connection State - haven't checked
 #   0xD001  # DSM Override Status - haven't checked
 #   0xD002  # DSM Override Allowed - haven't checked
-#   0xD007  # Appliance Cumulative Energy - this look like it's power, not energy, and u16_be, not u32
+#   0xD007  # Public metadata says Appliance Cumulative Energy, but RE2H50S10 uses the first u16 as instantaneous watts; trailing u16 meaning unknown
 #   0xD008  # Available Demand Response Modes - haven't checked
 
 esphome:
@@ -121,13 +127,31 @@ gea:
   erd_lookup: true
 
 sensor:
+  # Temperature ERDs use signed 16-bit values in °F x10.
+  #
+  # T1 is not listed in the RE2H quick-service thermistor table. The newer
+  # AeroTherm G2 guide identifies T1 as the lower tank sensor, and live
+  # RE2H50S10 behavior is consistent with that mapping.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Lower Tank Temperature"
+    id: t1_temperature
+    erd: 0x405F
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    state_class: measurement
+    device_class: temperature
+
+  # RE2H service mode calls T2 the tank (water) temperature. The newer
+  # AeroTherm G2 guide further identifies T2 as the upper tank sensor.
   # Raw command equivalent: 0xDE 0x10 (Request Current Status) byte 2, uint8 °F,
-  # or 0x56 (Hyper Terminal Data) bytes 5-6, °F x10
+  # or 0x56 (Hyper Terminal Data) bytes 5-6, °F x10.
   - platform: gea
     gea_id: gea_hub
     name: "Tank Temperature"
     id: tank_temperature
-    internal: true
     erd: 0x4060
     decode: int16_be
     multiplier: 0.1
@@ -135,36 +159,48 @@ sensor:
     unit_of_measurement: "°F"
     state_class: measurement
     device_class: temperature
-  # erd docs say cumulative energy in Wh, but empirically, this is power
-  - platform: gea
-    gea_id: gea_hub
-    id: power
-    name: "Power"
-    erd: 0xD007
-    decode: uint16_be # despite ERD docs, this matches burkemw3's observations
-    accuracy_decimals: 0
-    unit_of_measurement: "W"
-    device_class: power
-    state_class: measurement
 
-  - platform: total_daily_energy
-    name: "Total Daily Energy"
-    power_id: power
-    unit_of_measurement: "kWh"
-    state_class: total_increasing
-    device_class: energy
-    accuracy_decimals: 3
-    filters:
-      - multiply: 0.001
-  # Raw command equivalent: 0xDE 0x10 (Request Current Status) byte 1,
-  # vacation days remaining (the ERD API tracks hours, not days)
+  # T3a — evaporator inlet temperature.
   - platform: gea
     gea_id: gea_hub
-    name: "Timed Mode Hours Remaining"
-    erd: 0x4028
-    decode: uint16_be
-    unit_of_measurement: "h"
-  # Raw command equivalent: 0x56 (Hyper Terminal Data) bytes 13-14, T5 °F x10
+    name: "Evaporator Inlet Temperature"
+    erd: 0x4061
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    state_class: measurement
+    device_class: temperature
+    entity_category: diagnostic
+
+  # T3b — evaporator outlet temperature.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Evaporator Outlet Temperature"
+    erd: 0x4062
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    state_class: measurement
+    device_class: temperature
+    entity_category: diagnostic
+
+  # T4 — compressor discharge/outlet temperature.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Compressor Discharge Temperature"
+    erd: 0x4063
+    decode: int16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "°F"
+    state_class: measurement
+    device_class: temperature
+    entity_category: diagnostic
+
+  # T5 — ambient air temperature.
+  # Raw command equivalent: 0x56 (Hyper Terminal Data) bytes 13-14, °F x10.
   - platform: gea
     gea_id: gea_hub
     name: "Ambient Temperature"
@@ -175,6 +211,86 @@ sensor:
     unit_of_measurement: "°F"
     device_class: temperature
     state_class: measurement
+
+  # Live electrical telemetry. Exposed as diagnostics while we correlate
+  # these values with D007 and relay state under known loads.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Current"
+    erd: 0x4065
+    decode: uint16_be
+    multiplier: 0.1
+    accuracy_decimals: 1
+    unit_of_measurement: "A"
+    device_class: current
+    entity_category: diagnostic
+    state_class: measurement
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Voltage"
+    erd: 0x4066
+    decode: uint16_be
+    accuracy_decimals: 0
+    unit_of_measurement: "V"
+    device_class: voltage
+    entity_category: diagnostic
+    state_class: measurement
+
+  # Flow state is a one-byte enum on RE2H50S10. Expose the raw value until
+  # the enum meanings have been validated against real water-flow events.
+  # No measurement state class: averaging categorical codes is not meaningful.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Flow State Raw"
+    erd: 0x4069
+    decode: uint8
+    accuracy_decimals: 0
+    entity_category: diagnostic
+
+  # Public ERD metadata calls D007 "Appliance Cumulative Energy", but live
+  # RE2H50S10 captures show that the first big-endian uint16 tracks
+  # instantaneous watts: ~326-401 W with compressor/fan and ~4.4-4.8 kW with
+  # the resistance element. Keep the trailing uint16 separately for further
+  # reverse engineering; its meaning is not yet known.
+  - platform: gea
+    gea_id: gea_hub
+    id: power
+    name: "Power"
+    erd: 0xD007
+    decode: uint16_be
+    accuracy_decimals: 0
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+
+  # The trailing word is raw data with no established measurement semantics.
+  - platform: gea
+    gea_id: gea_hub
+    name: "D007 Trailing Word Raw"
+    erd: 0xD007
+    decode: uint16_be
+    byte_offset: 2
+    accuracy_decimals: 0
+    entity_category: diagnostic
+
+  - platform: total_daily_energy
+    name: "Total Daily Energy"
+    power_id: power
+    unit_of_measurement: "kWh"
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Timed Mode Hours Remaining"
+    erd: 0x4028
+    decode: uint16_be
+    unit_of_measurement: "h"
   # Raw command equivalent: 0xDE 0x10 (Request Current Status) byte 3, uint8 °F.
   # Differs from the user setpoint while in Vacation or Demand Response.
   - platform: gea
@@ -182,7 +298,6 @@ sensor:
     name: "Actual Setpoint"
     erd: 0x4026
     decode: int16_be
-    internal: true
     multiplier: 0.1
     accuracy_decimals: 1
     unit_of_measurement: "°F"
@@ -295,10 +410,22 @@ number:
     step: 1
     unit_of_measurement: "°F"
 binary_sensor:
+  # ERD 0x4068 is a two-byte relay bitfield. All five named flags are in
+  # byte 1: DLB=0x01, compressor=0x02, upper=0x04, lower=0x08, fan=0x10.
   - platform: template
     name: "GEA Bus Connected"
     entity_category: diagnostic
     lambda: 'return id(gea_hub).is_bus_connected();'
+  # DLB means Double Line Break: a separate line-switching relay.
+  # Its reported status alone does not indicate active heating.
+  - platform: gea
+    gea_id: gea_hub
+    id: dlb_on
+    name: "DLB Relay"
+    erd: 0x4068
+    bitmask: 0x01
+    byte_offset: 1
+    entity_category: diagnostic
   - platform: gea
     gea_id: gea_hub
     id: compressor_on
