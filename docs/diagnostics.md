@@ -57,6 +57,7 @@ binary_sensor:
 | `get_tx_retries()` | `uint32_t` | a pending request times out and is resent |
 | `get_dropped_requests()` | `uint32_t` | a pending request exhausts all retries |
 | `get_tx_collisions()` | `uint32_t` | a GEA2 bus collision is detected (TX echo differs from what was sent — see [Protocol & internals](protocol.md)) |
+| `get_rx_frame_timeouts()` | `uint32_t` | a received frame is discarded because no byte arrived for 400 ms before its ETX (truncated frame; the parser resynchronises) |
 | `is_bus_connected()` | `bool` | `true` when a valid packet has been received in the last 30 s |
 | `get_dest_address()` | `uint8_t` | the appliance address in use (resolved by GEA2 address discovery, or as configured) |
 | `is_address_resolved()` | `bool` | `false` while GEA2 address discovery is still probing or halted; `true` once an address is known |

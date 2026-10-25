@@ -154,7 +154,10 @@ Complete configurations for known appliances:
 | [`PDP715SYV0FS.yaml`](devices/dishwasher/PDP715SYV0FS.yaml) | GE PDP715SYV0FS dishwasher | Cycle selection, elapsed time, ASCII cycle name, model retrieval |
 | [`PFQ97HSPVDS.yaml`](devices/washer/PFQ97HSPVDS.yaml) | GE PFQ97HSPVDS Ultrafast Combo | Time remaining, door/lock/pump sensors, 200+ cycle options, remote start/stop, dosing |
 | [`RE2H50S10.yaml`](devices/water-heater/RE2H50S10.yaml) | Bradford White AeroTherm heat pump water heater | GEA2 bus, water_heater template with °F↔°C conversion, heat pump / hybrid / vacation modes |
+| [`PH65S10BPY.yaml`](devices/water-heater/PH65S10BPY.yaml) | GE Profile GeoSpring PH65S10BPY Smart Hybrid Heat Pump Water Heater | GEA3 bus, hybrid / heat pump / electric / high demand / vacation modes |
 | [`GYE21JYMCFFS.yaml`](devices/refrigerator/GYE21JYMCFFS.yaml) | GE Profile GYE21JYMCFFS French Door refrigerator | GEA2 bus, fridge/freezer setpoints and temperatures, water filter life, ice/water dispense counters, door open timers, last-cycle diagnostics, Sabbath mode |
+| [`GFD48GSSK0WW.yaml`](devices/dryer/GFD48GSSK0WW.yaml) | GE GFD48GSSK0WW gas dryer | GEA2 bus at 0x24 (not 0xC0), state/phase/cycle/time remaining; read-only by design (full ERD scan documented) |
+| [`PTD700RSN4SS.yaml`](devices/oven/PTD700RSN4SS.yaml) | GE Profile PTD700RSN4SS double wall oven | GEA2 bus at 0xC0, both cavities, cook mode + setpoint start/cancel, lights, all nine app settings writable |
 
 Got a working config for another appliance? PRs welcome.
 
