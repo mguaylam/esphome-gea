@@ -11,8 +11,9 @@
 # Findings worth not rediscovering (checked on this heater against the front panel, a separate power meter
 # and the panel's Service Mode, which switches each element, the compressor and the fan on by itself):
 # - The heater answers at bus address 0x60.
-# - Relay status 0x4068 is 2 bytes with the flags in the SECOND byte: 0x01 common (on with any heating load,
-#   lingers up to ~17 s after it stops), 0x02 compressor, 0x04 LOWER element, 0x08 UPPER element, 0x10 fan.
+# - Relay status 0x4068 is 2 bytes with the flags in the SECOND byte: 0x01 DLB (Double Line Break relay; on
+#   with any heating load, lingers up to ~17 s after it stops), 0x02 compressor, 0x04 LOWER element,
+#   0x08 UPPER element, 0x10 fan.
 #   Typical values: 0x0013 heat pump cycle, 0x0010 fan only, 0x0005 lower element, 0x0009 upper element.
 # - Probes: T1 (0x405F) is the bottom of the tank and drops when hot water is drawn; T2 (0x4060) is the top of
 #   the tank; T3a/T3b (0x4061/0x4062) evaporator inlet/outlet; T4 (0x4063) compressor discharge; T5 (0x4064)
@@ -373,8 +374,8 @@ binary_sensor:
     device_class: running
   - platform: gea
     gea_id: gea_hub
-    name: "Heating Active"   # common bit; lingers ~17 s, so not for exact timing
-    icon: mdi:fire
+    name: "DLB Relay"   # lingers ~17 s after heating stops, so not for exact timing
+    icon: mdi:electric-switch
     erd: 0x4068
     byte_offset: 1
     bitmask: 0x01
