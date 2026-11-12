@@ -5,13 +5,14 @@
 <h1 align="center">esphome-gea</h1>
 
 <p align="center">
-  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml"><img src="https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml/badge.svg" alt="Validate"></a>
-  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml"><img src="https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml/badge.svg" alt="Test"></a>
-  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml"><img src="https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml/badge.svg" alt="Lint"></a>
-  <a href="https://esphome.io/components/external_components"><img src="https://img.shields.io/badge/ESPHome-external%20component-blue?logo=esphome" alt="ESPHome"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
-  <a href="https://www.home-assistant.io/"><img src="https://img.shields.io/badge/Home%20Assistant-compatible-41bdf5?logo=home-assistant" alt="Home Assistant"></a>
-  <a href="https://www.espressif.com/"><img src="https://img.shields.io/badge/ESP32-supported-red?logo=espressif" alt="ESP32"></a>
+  <a href="https://esphome.io/components/external_components"><img src="https://img.shields.io/badge/ESPHome-external%20component-388bfd?style=flat-square&logo=esphome&logoColor=white" alt="ESPHome external component"></a>
+  <a href="https://www.home-assistant.io/"><img src="https://img.shields.io/badge/Home%20Assistant-compatible-388bfd?style=flat-square&logo=home-assistant&logoColor=white" alt="Home Assistant compatible"></a>
+  <a href="https://www.espressif.com/"><img src="https://img.shields.io/badge/ESP32-supported-388bfd?style=flat-square&logo=espressif&logoColor=white" alt="ESP32 supported"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-d29922?style=flat-square" alt="License: MIT"></a>
+  <br>
+  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/mguaylam/esphome-gea/lint.yml?branch=main&label=lint&style=flat-square" alt="lint"></a>
+  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml"><img src="https://img.shields.io/github/actions/workflow/status/mguaylam/esphome-gea/validate.yml?branch=main&label=validate&style=flat-square" alt="validate"></a>
+  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/mguaylam/esphome-gea/test.yml?branch=main&label=test&style=flat-square" alt="test"></a>
 </p>
 
 An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances — and other appliances supporting the GEA bus — via the **GEA2 or GEA3 serial bus**, with native [Home Assistant](https://www.home-assistant.io/) integration.
