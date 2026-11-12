@@ -56,7 +56,7 @@ binary_sensor:
 | `get_crc_errors()` | `uint32_t` | a framed packet whose CRC does not match |
 | `get_tx_retries()` | `uint32_t` | a pending request times out and is resent |
 | `get_dropped_requests()` | `uint32_t` | a pending request exhausts all retries |
-| `get_tx_collisions()` | `uint32_t` | a GEA2 bus collision is detected (TX echo differs from what was sent — see [Protocol & internals](protocol.md)) |
+| `get_tx_collisions()` | `uint32_t` | a GEA2 bus collision is detected (a damaged frame arrives while the echo of our transmission is outstanding — see [Protocol & internals](protocol.md)) |
 | `get_rx_frame_timeouts()` | `uint32_t` | a received frame is discarded because no byte arrived for 400 ms before its ETX (truncated frame; the parser resynchronises) |
 | `is_bus_connected()` | `bool` | `true` when a valid packet has been received in the last 30 s |
 | `get_dest_address()` | `uint8_t` | the appliance address in use (resolved by GEA2 address discovery, or as configured) |
@@ -125,20 +125,23 @@ since the per-frame output is high-volume.
 | Level | What the GEA component emits | When to use it |
 |-------|------------------------------|----------------|
 | `ERROR` | *(none today)* | — |
-| `WARN` | CRC mismatch, ERD read/write failed (`result != 0`), request dropped after exhausting retries, subscribe-all rejected, unexpected response shape, discovery cap reached, GEA2 TX echo missing (wiring fault) | Always visible — anomalies worth attention |
+| `WARN` | CRC mismatch, ERD read/write failed (`result != 0`), request dropped after exhausting retries, subscribe-all rejected, unexpected response shape, discovery cap reached, GEA2 TX echo missing (wiring fault; reported with the 10 s stats) | Always visible — anomalies worth attention |
 | `INFO` | ERD values read, auto-detected appliance address, subscription state changes, discovery progress/results, poll list built | Useful default in normal operation |
 | `CONFIG` | Configuration dump at boot (`dump_config`) | Startup only |
-| `DEBUG` *(default)* | STX / valid-packet markers, "ignoring packet" from another node, 10 s RX stats (includes the TX collision count on GEA2), write OK, retry on timeout, GEA2 collision detected + fast retry | Routine diagnostics |
+| `DEBUG` *(default)* | STX / valid-packet markers, "ignoring packet" from another node, 10 s RX stats (includes the TX collision count on GEA2), write OK, retry on timeout, GEA2 collision detected + fast retry, GEA2 TX echo not seen within 100 ms | Routine diagnostics |
 | `VERBOSE` | Per-frame RX dump, unexpected bytes, unmatched responses, keep-alive, GEA2 TX echo verified / self-echo fallback drop | Deep wiring / protocol debugging |
 
 On the half-duplex GEA2 bus everything the MCU transmits is echoed back on RX
-(see [Protocol & internals](protocol.md)). The echo is matched byte-by-byte
-against what was sent — silently when it matches (`VERBOSE` confirms it), at
-`DEBUG` when it doesn't (collision detected, fast retry), and with a `WARN`
-when it never arrives (wiring fault). An echoed frame that slips past the
-matcher is still identified by its source address matching our own and dropped
-at `VERBOSE` — it does not count toward bus liveness and is not treated as
-foreign traffic.
+(see [Protocol & internals](protocol.md)). The echo is decoded as a frame and
+recognised by its source address matching our own: silently when it comes back
+intact (`VERBOSE` confirms it), at `DEBUG` when a damaged frame arrives in its
+place (collision detected, fast retry) or when nothing comes back within
+100 ms. Echoes that never came back are totalled and reported with a `WARN`
+next to the 10 s RX stats, as `N of M frames sent since boot` — a count that
+tracks the frames sent means the wiring does not return the echo at all (see
+the hardware baseline in [Protocol & internals](protocol.md)). The echoed frame
+itself is dropped at `VERBOSE` — it does not count toward bus liveness and is
+not treated as foreign traffic.
 
 ## See also
 

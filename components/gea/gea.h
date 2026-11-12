@@ -278,7 +278,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // GEA2 collision avoidance (bus-idle gate) and detection (TX echo check)
   bool gea2_bus_clear_() const;
-  bool consume_gea2_echo_byte_(uint8_t byte);
+  bool settle_gea2_echo_(const std::vector<uint8_t> &pkt);
 
   // RX state machine
   void process_rx_byte_(uint8_t byte);
@@ -334,9 +334,11 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // for GEA2_TX_IDLE_MS.  One byte at 19200 baud is ~0.52 ms, so 10 ms of
   // silence places us well clear of other nodes' frames and inter-byte gaps.
   static constexpr uint32_t GEA2_TX_IDLE_MS = 10;
-  // Detection: the wire image of our last transmission is kept and matched
-  // byte-for-byte against the bus echo.  If the echo never completes within
-  // this window, assume it never will (TX open / RX mute) and unwedge.
+  // Detection: every transmission comes back on RX as a frame of our own, and
+  // is settled when the parser completes it — verified if it is intact, a
+  // collision if a damaged frame turns up instead (settle_gea2_echo_).  If
+  // neither happens within this window, assume it never will (TX open / RX
+  // mute) and unwedge.
   static constexpr uint32_t GEA2_ECHO_TIMEOUT_MS = 100;
   // A frame that starts (STX) but never terminates (ETX) must not hold the
   // parser out of IDLE indefinitely: that wedges gea2_bus_clear_() and
@@ -352,11 +354,16 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // random backoff (min + [0, span)) instead of the full request timeout.
   static constexpr uint32_t GEA2_COLLISION_BACKOFF_MIN_MS = 2;
   static constexpr uint32_t GEA2_COLLISION_BACKOFF_SPAN_MS = 18;
-  std::vector<uint8_t> gea2_echo_buf_;  // expected echo (exact wire bytes)
-  size_t gea2_echo_idx_{0};             // match cursor into gea2_echo_buf_
-  uint32_t gea2_echo_at_ms_{0};         // when the frame was written (for the timeout)
-  // Runs loop() continuously while a GEA2 exchange is in flight so the echo
-  // matcher, backoff retries and the bus-idle gate react at millisecond
+  bool gea2_echo_pending_{false};  // a transmitted frame has not come back yet
+  uint32_t gea2_echo_at_ms_{0};    // when that frame was written (for the timeout)
+  // Echo bookkeeping since boot, for the wiring report in the periodic stats:
+  // frames written to the wire, how many never came back, and how many of
+  // those have already been reported.
+  uint32_t gea2_tx_frames_{0};
+  uint32_t gea2_echo_missing_{0};
+  uint32_t gea2_echo_missing_reported_{0};
+  // Runs loop() continuously while a GEA2 exchange is in flight so echo
+  // settlement, backoff retries and the bus-idle gate react at millisecond
   // resolution instead of the ~16 ms default loop interval.  Released as soon
   // as the bus goes quiet, so the idle polling cadence costs nothing.
   HighFrequencyLoopRequester high_freq_;
