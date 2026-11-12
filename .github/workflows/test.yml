@@ -7,6 +7,17 @@ on:
     branches: [main]
 
 jobs:
+  host-test:
+    name: host unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -o /tmp/test_string_decode tests/host/test_string_decode.cpp
+          /tmp/test_string_decode
+
   compile-test:
     name: ${{ matrix.config }}
     runs-on: ubuntu-latest
@@ -20,6 +31,7 @@ jobs:
           - tests/components/gea/test.rp2040.yaml
           - tests/components/gea/test.esp32-idf.gea2.yaml
           - tests/components/gea/test.esp32-idf.gea2-scan.yaml
+          - tests/components/gea/test.esp32-idf.erd-lookup.yaml
 
     steps:
       - uses: actions/checkout@v4
@@ -44,10 +56,11 @@ jobs:
         run: esphome compile ${{ matrix.config }}
 
   compile-test-done:
-    needs: [compile-test]
+    needs: [compile-test, host-test]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - run: |
-          result="${{ needs.compile-test.result }}"
-          if [[ "$result" == "success" ]]; then exit 0; else exit 1; fi
+          compile="${{ needs.compile-test.result }}"
+          host="${{ needs.host-test.result }}"
+          if [[ "$compile" == "success" && "$host" == "success" ]]; then exit 0; else exit 1; fi

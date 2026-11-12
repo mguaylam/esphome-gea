@@ -255,6 +255,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   uint32_t get_tx_retries() const { return tx_retries_; }
   uint32_t get_dropped_requests() const { return dropped_requests_; }
   uint32_t get_tx_collisions() const { return tx_collisions_; }
+  uint32_t get_rx_frame_timeouts() const { return rx_frame_timeouts_; }
 
   // ---- on_erd_change triggers (registered from Python codegen) ------------
   void register_erd_change_trigger(ErdChangeTrigger *trigger) { erd_change_triggers_.push_back(trigger); }
@@ -337,6 +338,16 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // byte-for-byte against the bus echo.  If the echo never completes within
   // this window, assume it never will (TX open / RX mute) and unwedge.
   static constexpr uint32_t GEA2_ECHO_TIMEOUT_MS = 100;
+  // A frame that starts (STX) but never terminates (ETX) must not hold the
+  // parser out of IDLE indefinitely: that wedges gea2_bus_clear_() and
+  // deadlocks the GEA2 poller.  Measured as silence since the last received
+  // byte (last_rx_byte_ms_).  A maximum-length frame is 255 bytes, which is
+  // ~133 ms on the wire at 19200 baud and ~11 ms at 230400, so this window
+  // cannot fire on a legitimately slow frame.
+  static constexpr uint32_t RX_FRAME_TIMEOUT_MS = 400;
+  // Hard ceiling on the unescaped frame buffer.  LEN is a single byte, so no
+  // legitimate frame exceeds 255 bytes; anything larger is line noise.
+  static constexpr size_t RX_FRAME_MAX_BYTES = 260;
   // After a detected collision the pending request is retried after a short
   // random backoff (min + [0, span)) instead of the full request timeout.
   static constexpr uint32_t GEA2_COLLISION_BACKOFF_MIN_MS = 2;
@@ -365,6 +376,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // Raw byte counter — reported periodically so we can confirm UART is alive.
   uint32_t rx_byte_count_{0};
+  uint32_t rx_frame_timeouts_{0};  // frames discarded by RX_FRAME_TIMEOUT_MS
   uint32_t last_stats_ms_{0};
 
   // Diagnostics counters exposed via get_*() accessors.

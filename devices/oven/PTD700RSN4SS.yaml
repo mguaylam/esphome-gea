@@ -1,0 +1,671 @@
+# ESPHome config for a GE Profile double wall oven via GEA2 — read AND write
+# Appliance: GE Profile PTD700RSN4SS (30" double electric wall oven, two cavities on one control board)
+# Hardware: FirstBuild "GE Appliances Home Assistant Adapter" (Seeed XIAO ESP32-C3 on a carrier that routes the
+#   appliance jack's serial line to GPIO9/GPIO10 and powers the board from the jack)
+# Framework: ESP-IDF
+# Baud rate: 19200 (GEA2)
+# TX = GPIO9, RX = GPIO10
+#
+# Findings worth not rediscovering:
+# - This oven is GEA2, not GEA3. GE's own adapter firmware is GEA3-only and reads garbage here (wrong baud);
+#   the hub's GEA2 mode at 19200 talks to it. The control board answers at bus address 0xC0 (GE's usual);
+#   it is pinned below because the hub's own discovery halts on a multi-node bus.
+# - Two cavities, one board: upper oven ERDs are 0x51xx, lower oven 0x52xx, shared oven ERDs 0x00xx / 0x50xx.
+# - Decoders mirror gehomesdk (simbaja/gehome), the library behind the SmartHQ cloud integration, and every
+#   read here was validated byte-for-byte against SmartHQ on the same oven. Temperatures are uint16 big-endian
+#   degrees F (a raw read of 75 = ambient); timers are seconds.
+# - Cook mode ERD 0x5x00 is a 13-byte struct: byte 0 = mode (ErdOvenCookMode: 1 Bake, 18 Convection Bake,
+#   27 Multi Bake, 36 Convection Roast, 158 Air Fry, 11/12 Broil, 0 None), bytes 1-2 = setpoint F, then cook
+#   time, probe temperature, delay and two-temp fields. The upper cavity has Air Fry; the lower does not.
+# - Writes proven on the board: all nine app settings (12-hour shutoff 0x5000, end tone 0x5001, convection
+#   conversion 0x5003, clock format 0x0006, temperature unit 0x0007, sabbath 0x0009, sound level 0x000a,
+#   per-cavity temperature offset 0x5106/0x5206 as int8 +/-35), the cavity lights 0x5111/0x5211
+#   (0 Off / 1 High / 2 Dim), and mode + setpoint cook control: stage a mode and a setpoint, then the Start
+#   button writes the 0x5x00 struct in one ERD write; Cancel writes mode 0. Control Lock being on did not
+#   block remote writes. The bake write HEATS THE OVEN; verify with an empty cavity.
+# - Not implemented: cook time and delay start (the struct fields are known, the timespan encoding was never
+#   captured), and the temperature probe as a target.
+esphome:
+  name: ge-double-oven
+  friendly_name: GE Double Oven
+  comment: GE Profile PTD700RSN4SS via the FirstBuild GEA adapter
+  project:
+    name: GE.PTD700RSN4SS
+    version: "1.0.0"
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2
+  ap:
+    ssid: "ge-double-oven fallback"
+    password: !secret ap_password
+  on_connect:
+    - output.turn_on: led_wifi
+  on_disconnect:
+    - output.turn_off: led_wifi
+captive_portal:
+logger:
+  level: DEBUG
+api:
+  encryption:
+    key: !secret api_key
+  on_client_connected:
+    - output.turn_on: led_ha
+    - lambda: 'id(gea_hub).log_address();'
+  on_client_disconnected:
+    - output.turn_off: led_ha
+ota:
+  - platform: esphome
+    password: !secret ota_password
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [gea]
+status_led:
+  pin: GPIO2
+output:
+  - platform: gpio
+    pin: GPIO3
+    id: led_ha
+  - platform: gpio
+    pin: GPIO4
+    id: led_wifi
+uart:
+  id: uart_gea
+  tx_pin: GPIO9
+  rx_pin: GPIO10
+  baud_rate: 19200
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  protocol: gea2
+  dest_address: 0xC0
+  poll_interval: 500ms
+  erd_lookup: true
+
+# ---- shared enums as YAML anchors ----
+.oven_state_options: &oven_state_options
+  0x00: "Off"
+  0x01: "Preheat"
+  0x02: "Preheat"
+  0x03: "Preheat"
+  0x04: "Preheat"
+  0x05: "Bake"
+  0x06: "Bake (Two Temp.)"
+  0x07: "Convection Bake"
+  0x08: "Convection Bake (Two Temp.)"
+  0x09: "Multi Bake"
+  0x0A: "Multi Bake"
+  0x0B: "Convection Roast"
+  0x0C: "Convection Roast (Two Temp.)"
+  0x0D: "Broil (Low)"
+  0x0E: "Broil (High)"
+  0x0F: "Convection Broil (High)"
+  0x10: "Convection Broil (Low)"
+  0x11: "Convection Broil (Crisp)"
+  0x12: "Keep Warm"
+  0x13: "Proof"
+  0x14: "Sabbath Mode"
+  0x15: "Self Clean"
+  0x16: "Self Clean"
+  0x17: "Self Clean"
+  0x18: "Self Clean"
+  0x19: "Steam Clean"
+  0x1A: "Steam Clean"
+  0x1B: "Delayed Start"
+.oven_light_options: &oven_light_options
+  0x00: "Off"
+  0x01: High
+  0x02: Dim
+  0xFF: Not Available
+
+text_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper State
+    erd: 0x5101
+    decode: uint8
+    icon: mdi:stove
+    options: *oven_state_options
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower State
+    erd: 0x5201
+    decode: uint8
+    icon: mdi:stove
+    options: *oven_state_options
+  - platform: gea
+    gea_id: gea_hub
+    name: Model
+    erd: 0x0001
+    decode: ascii
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: Serial Number
+    erd: 0x0002
+    decode: ascii
+    entity_category: diagnostic
+  - platform: template
+    name: Bus Address
+    entity_category: diagnostic
+    icon: mdi:map-marker
+    update_interval: 60s
+    lambda: |-
+      if(!id(gea_hub).is_address_resolved()) return {"unresolved"};
+      char buf[8]; snprintf(buf, sizeof(buf), "0x%02X", id(gea_hub).get_dest_address());
+      return {std::string(buf)};
+
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper Cook Mode
+    erd: 0x5100
+    byte_offset: 0
+    decode: uint8
+    icon: mdi:stove
+    options:
+      0x00: No Mode
+      0x01: Bake
+      0x02: Bake
+      0x03: Bake
+      0x04: Bake
+      0x05: Bake
+      0x06: Bake
+      0x07: Bake
+      0x08: Bake
+      0x09: Bake
+      0x0A: Bake (Sabbath)
+      0x0B: Broil Low
+      0x0C: Broil High
+      0x0D: Proof
+      0x0E: Proof
+      0x0F: Warm
+      0x10: Warm
+      0x11: Warm
+      0x12: Convection Bake
+      0x13: Convection Bake
+      0x14: Convection Bake
+      0x15: Convection Bake
+      0x16: Convection Bake
+      0x17: Convection Bake
+      0x18: Convection Bake
+      0x19: Convection Bake
+      0x1A: Convection Bake
+      0x1B: Conv. Multi-Bake
+      0x1C: Conv. Multi-Bake
+      0x1D: Conv. Multi-Bake
+      0x1E: Conv. Multi-Bake
+      0x1F: Conv. Multi-Bake
+      0x20: Conv. Multi-Bake
+      0x21: Conv. Multi-Bake
+      0x22: Conv. Multi-Bake
+      0x23: Conv. Multi-Bake
+      0x24: Convection Roast
+      0x25: Convection Roast
+      0x26: Convection Roast
+      0x27: Convection Roast
+      0x28: Convection Roast
+      0x29: Convection Roast
+      0x2A: Convection Roast
+      0x2B: Convection Roast
+      0x2C: Convection Roast
+      0x2D: Conv. Broil Low
+      0x2E: Conv. Broil High
+      0x2F: Conv. Broil Crisp
+      0x30: Conv. Broil Crisp
+      0x31: Custom Self Clean
+      0x32: Custom Self Clean
+      0x33: Steam Clean
+      0x34: Steam Clean
+      0x35: Dual Broil Low
+      0x36: Dual Broil High
+      0x38: Frozen Snacks
+      0x39: Frozen Snacks
+      0x3A: Frozen Pizza
+      0x3B: Frozen Pizza
+      0x3C: Baked Goods
+      0x3D: Frozen Snacks
+      0x3E: Frozen Snacks
+      0x3F: Frozen Pizza
+      0x40: Frozen Pizza
+      0x41: Baked Goods
+      0x5E: Vent Bake
+      0x9E: Air Fry
+      0x9F: Air Fry
+      0xA0: Air Fry
+      0xA1: Air Fry
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower Cook Mode
+    erd: 0x5200
+    byte_offset: 0
+    decode: uint8
+    icon: mdi:stove
+    options:
+      0x00: No Mode
+      0x01: Bake
+      0x02: Bake
+      0x03: Bake
+      0x04: Bake
+      0x05: Bake
+      0x06: Bake
+      0x07: Bake
+      0x08: Bake
+      0x09: Bake
+      0x0A: Bake (Sabbath)
+      0x0B: Broil Low
+      0x0C: Broil High
+      0x0D: Proof
+      0x0E: Proof
+      0x0F: Warm
+      0x10: Warm
+      0x11: Warm
+      0x12: Convection Bake
+      0x13: Convection Bake
+      0x14: Convection Bake
+      0x15: Convection Bake
+      0x16: Convection Bake
+      0x17: Convection Bake
+      0x18: Convection Bake
+      0x19: Convection Bake
+      0x1A: Convection Bake
+      0x1B: Conv. Multi-Bake
+      0x1C: Conv. Multi-Bake
+      0x1D: Conv. Multi-Bake
+      0x1E: Conv. Multi-Bake
+      0x1F: Conv. Multi-Bake
+      0x20: Conv. Multi-Bake
+      0x21: Conv. Multi-Bake
+      0x22: Conv. Multi-Bake
+      0x23: Conv. Multi-Bake
+      0x24: Convection Roast
+      0x25: Convection Roast
+      0x26: Convection Roast
+      0x27: Convection Roast
+      0x28: Convection Roast
+      0x29: Convection Roast
+      0x2A: Convection Roast
+      0x2B: Convection Roast
+      0x2C: Convection Roast
+      0x2D: Conv. Broil Low
+      0x2E: Conv. Broil High
+      0x2F: Conv. Broil Crisp
+      0x30: Conv. Broil Crisp
+      0x31: Custom Self Clean
+      0x32: Custom Self Clean
+      0x33: Steam Clean
+      0x34: Steam Clean
+      0x35: Dual Broil Low
+      0x36: Dual Broil High
+      0x38: Frozen Snacks
+      0x39: Frozen Snacks
+      0x3A: Frozen Pizza
+      0x3B: Frozen Pizza
+      0x3C: Baked Goods
+      0x3D: Frozen Snacks
+      0x3E: Frozen Snacks
+      0x3F: Frozen Pizza
+      0x40: Frozen Pizza
+      0x41: Baked Goods
+      0x5E: Vent Bake
+      0x9E: Air Fry
+      0x9F: Air Fry
+      0xA0: Air Fry
+      0xA1: Air Fry
+
+sensor:
+  # Upper cavity
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper Set Temperature
+    erd: 0x5100
+    byte_offset: 1
+    decode: uint16_be
+    unit_of_measurement: "°F"
+    device_class: temperature
+    accuracy_decimals: 0
+    icon: mdi:thermometer
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower Set Temperature
+    erd: 0x5200
+    byte_offset: 1
+    decode: uint16_be
+    unit_of_measurement: "°F"
+    device_class: temperature
+    accuracy_decimals: 0
+    icon: mdi:thermometer
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper Display Temperature
+    erd: 0x5109
+    decode: uint16_be
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 0
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper Raw Temperature
+    erd: 0x510D
+    decode: uint16_be
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 0
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper Probe Temperature
+    erd: 0x5103
+    decode: uint16_be
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 0
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper Cook Time Remaining
+    erd: 0x5104
+    decode: uint16_be
+    multiplier: 0.0166667
+    unit_of_measurement: min
+    device_class: duration
+    accuracy_decimals: 0
+    icon: mdi:timer-outline
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper Kitchen Timer
+    erd: 0x5105
+    decode: uint16_be
+    multiplier: 0.0166667
+    unit_of_measurement: min
+    device_class: duration
+    accuracy_decimals: 0
+    icon: mdi:timer-sand
+  # Lower cavity
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower Display Temperature
+    erd: 0x5209
+    decode: uint16_be
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 0
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower Raw Temperature
+    erd: 0x520D
+    decode: uint16_be
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 0
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower Probe Temperature
+    erd: 0x5203
+    decode: uint16_be
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 0
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower Cook Time Remaining
+    erd: 0x5204
+    decode: uint16_be
+    multiplier: 0.0166667
+    unit_of_measurement: min
+    device_class: duration
+    accuracy_decimals: 0
+    icon: mdi:timer-outline
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower Kitchen Timer
+    erd: 0x5205
+    decode: uint16_be
+    multiplier: 0.0166667
+    unit_of_measurement: min
+    device_class: duration
+    accuracy_decimals: 0
+    icon: mdi:timer-sand
+
+binary_sensor:
+  - platform: template
+    name: Bus Connected
+    entity_category: diagnostic
+    device_class: connectivity
+    lambda: 'return id(gea_hub).is_bus_connected();'
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper Probe Present
+    erd: 0x5107
+    bitmask: 0x01
+    icon: mdi:thermometer-probe
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower Probe Present
+    erd: 0x5207
+    bitmask: 0x01
+    icon: mdi:thermometer-probe
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper Remote Enabled
+    erd: 0x510A
+    bitmask: 0x01
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower Remote Enabled
+    erd: 0x520A
+    bitmask: 0x01
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: Control Locked
+    erd: 0x0004
+    bitmask: 0x01
+    device_class: lock
+    icon: mdi:lock
+
+select:
+  - platform: gea
+    gea_id: gea_hub
+    name: Temperature Unit
+    erd: 0x0007
+    decode: uint8
+    entity_category: config
+    options:
+      0x00: Fahrenheit
+      0x01: Celsius
+  - platform: gea
+    gea_id: gea_hub
+    name: Clock Format
+    erd: 0x0006
+    decode: uint8
+    entity_category: config
+    options:
+      0x00: 12 Hour
+      0x01: 24 Hour
+      0x02: No Display
+  - platform: gea
+    gea_id: gea_hub
+    name: End Tone
+    erd: 0x5001
+    decode: uint8
+    entity_category: config
+    options:
+      0x00: Single Beep
+      0x01: Repeated Beep
+  - platform: gea
+    gea_id: gea_hub
+    name: Sound Level
+    erd: 0x000A
+    decode: uint8
+    entity_category: config
+    options:
+      0x00: "Off"
+      0x01: Low
+      0x02: Standard
+      0x03: High
+  - platform: template
+    name: Upper Mode
+    id: up_mode
+    optimistic: true
+    icon: mdi:stove
+    options: ["Bake", "Convection Bake", "Conv. Multi-Bake", "Convection Roast", "Air Fry"]
+    initial_option: Bake
+  - platform: template
+    name: Lower Mode
+    id: lo_mode
+    optimistic: true
+    icon: mdi:stove
+    options: ["Bake", "Convection Bake", "Conv. Multi-Bake", "Convection Roast"]
+    initial_option: Bake
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper Light
+    erd: 0x5111
+    decode: uint8
+    icon: mdi:lightbulb
+    options:
+      0x00: "Off"
+      0x01: High
+      0x02: Dim
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower Light
+    erd: 0x5211
+    decode: uint8
+    icon: mdi:lightbulb
+    options:
+      0x00: "Off"
+      0x01: High
+      0x02: Dim
+
+number:
+  - platform: gea
+    gea_id: gea_hub
+    name: Upper Temp Offset
+    erd: 0x5106
+    decode: int8
+    min_value: -35
+    max_value: 35
+    step: 1
+    unit_of_measurement: "°F"
+    entity_category: config
+    icon: mdi:plus-minus-variant
+  - platform: gea
+    gea_id: gea_hub
+    name: Lower Temp Offset
+    erd: 0x5206
+    decode: int8
+    min_value: -35
+    max_value: 35
+    step: 1
+    unit_of_measurement: "°F"
+    entity_category: config
+    icon: mdi:plus-minus-variant
+  - platform: template
+    name: Upper Setpoint
+    id: up_temp
+    optimistic: true
+    mode: box
+    min_value: 300
+    max_value: 500
+    step: 5
+    initial_value: 350
+    unit_of_measurement: "°F"
+    icon: mdi:thermometer
+  - platform: template
+    name: Lower Setpoint
+    id: lo_temp
+    optimistic: true
+    mode: box
+    min_value: 300
+    max_value: 500
+    step: 5
+    initial_value: 350
+    unit_of_measurement: "°F"
+    icon: mdi:thermometer
+
+switch:
+  - platform: gea
+    gea_id: gea_hub
+    name: 12-Hour Shutoff
+    erd: 0x5000
+    entity_category: config
+    icon: mdi:timer-off
+  - platform: gea
+    gea_id: gea_hub
+    name: Convection Conversion
+    erd: 0x5003
+    entity_category: config
+    icon: mdi:autorenew
+  - platform: gea
+    gea_id: gea_hub
+    name: Sabbath Mode
+    erd: 0x0009
+    entity_category: config
+    icon: mdi:candelabra
+
+button:
+  - platform: template
+    name: Upper Start
+    icon: mdi:play
+    on_press:
+      - lambda: |-
+          auto idx = id(up_mode).active_index();
+          uint8_t code = 1;  // Bake
+          if (idx.has_value()) {
+            switch (*idx) {
+              case 1: code = 18; break;   // Convection Bake
+              case 2: code = 27; break;   // Conv. Multi-Bake
+              case 3: code = 36; break;   // Convection Roast
+              case 4: code = 158; break;  // Air Fry (upper only)
+            }
+          }
+          uint16_t t = (uint16_t)(id(up_temp).state);
+          std::vector<uint8_t> p(13, 0);
+          p[0] = code; p[1] = (uint8_t)(t >> 8); p[2] = (uint8_t)(t & 0xFF);
+          id(gea_hub).write_erd(0x5100, p);
+  - platform: template
+    name: Upper Cancel
+    icon: mdi:stop
+    on_press:
+      - lambda: 'id(gea_hub).write_erd(0x5100, std::vector<uint8_t>(13, 0));'
+  - platform: template
+    name: Lower Start
+    icon: mdi:play
+    on_press:
+      - lambda: |-
+          auto idx = id(lo_mode).active_index();
+          uint8_t code = 1;  // Bake
+          if (idx.has_value()) {
+            switch (*idx) {
+              case 1: code = 18; break;   // Convection Bake
+              case 2: code = 27; break;   // Conv. Multi-Bake
+              case 3: code = 36; break;   // Convection Roast
+              case 4: code = 158; break;  // Air Fry (upper only)
+            }
+          }
+          uint16_t t = (uint16_t)(id(lo_temp).state);
+          std::vector<uint8_t> p(13, 0);
+          p[0] = code; p[1] = (uint8_t)(t >> 8); p[2] = (uint8_t)(t & 0xFF);
+          id(gea_hub).write_erd(0x5200, p);
+  - platform: template
+    name: Lower Cancel
+    icon: mdi:stop
+    on_press:
+      - lambda: 'id(gea_hub).write_erd(0x5200, std::vector<uint8_t>(13, 0));'
+  - platform: restart
+    name: Restart
+    entity_category: diagnostic
