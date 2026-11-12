@@ -114,7 +114,7 @@ UART settings:
 - **Read & write** — sensors, switches, selects, numbers, buttons, text sensors, binary sensors.
 - **Auto-discovery** — every ERD on the bus is logged on boot for easy reverse-engineering (GEA3; GEA2 polls only declared ERDs).
 - **Plug-and-play addressing** — GEA3 appliance bus address auto-detected (GEA2 requires `dest_address`).
-- **Resilient** — periodic re-subscription (GEA3) or round-robin polling (GEA2) recovers state after appliance power cycles.
+- **Resilient** — periodic re-subscription (GEA3) or per-ERD polling (GEA2) recovers state after appliance power cycles.
 - **Flexible decoding** — 13 numeric types, raw hex, ASCII, enum option maps, scaling via `multiplier`/`offset`.
 - **Edge-triggered automations** — `on_erd_change` fires on rising/falling/any bitmask transitions.
 - **Bus health** — diagnostic counters and `is_bus_connected()` lambda for status LEDs.
