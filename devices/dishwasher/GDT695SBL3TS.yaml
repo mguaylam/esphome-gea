@@ -1,0 +1,797 @@
+# ESPHome config for a GE dishwasher via GEA2 — read AND write
+# Appliance: GE GDT695SBL3TS
+# Hardware: FirstBuild "GE Appliances Home Assistant Adapter" (Seeed XIAO ESP32-C3 on a carrier that routes the
+#   appliance jack's serial line to GPIO9/GPIO10 and powers the board from the jack)
+# Framework: ESP-IDF
+# Baud rate: 19200 (GEA2, half-duplex)
+# TX = GPIO9, RX = GPIO10
+#
+# Findings worth not rediscovering:
+# - This dishwasher is GEA2, not GEA3. None of the PDP715SYV0FS (GEA3) control ERDs exist here: 0x3204,
+#   0x321A-0x3221, 0x3087, 0x3084, 0x3107, 0x310A and 0x310B are all absent. The board answers at 0x40.
+# - ERDs confirmed by a full 2445-ERD GEA2 discovery sweep; 44 responded. Everything declared below exists.
+# - Every control (cycle, wash temp, zone, steam, heated dry, bottle jets, panel lock, rinse aid, mute,
+#   door wakeup, delay start) is bit-packed into ERD 0x3007 User Settings, which IS writable. Fields share bytes, so the controls go
+#   through a bit-level read-modify-write script (uc_write_bits) instead of byte-granular gea entities.
+#   Field names and positions below are GE's, from erd-definitions/appliance_api_erd_definitions.json.
+# - Native Fahrenheit for water temperature; 75 °F is the "unknown" sentinel. Turbidity's sentinel is 1000.
+# - No start/stop: ERD 0x3000 Cycle Status is read-only in GE's definitions. See the note near the end.
+
+esphome:
+  name: ge-dishwasher
+  friendly_name: GE Dishwasher
+  project:
+    name: GE.GDT695SBL3TS
+    version: "1.0.0"
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2
+  ap:
+    ssid: "ge-dishwasher fallback"
+    password: !secret ap_password
+  on_connect:
+    - output.turn_on: led_wifi
+  on_disconnect:
+    - output.turn_off: led_wifi
+
+captive_portal:
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret api_key
+  on_client_connected:
+    - output.turn_on: led_ha
+  on_client_disconnected:
+    - output.turn_off: led_ha
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [gea]
+
+status_led:
+  pin: GPIO2
+
+output:
+  - platform: gpio
+    pin: GPIO3
+    id: led_ha
+  - platform: gpio
+    pin: GPIO4
+    id: led_wifi
+
+uart:
+  id: uart_gea
+  tx_pin: GPIO9
+  rx_pin: GPIO10
+  baud_rate: 19200
+
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  protocol: gea2
+  dest_address: 0x40     # the dishwasher; confirmed from the power-up announce frame
+  # Default is 2s. 26 ERDs are polled, so 2s means ~52 s per full refresh;
+  # 100ms brings that to ~2.6 s. Raise it if frame timeouts become frequent.
+  poll_interval: 100ms
+
+# -----------------------------------------------------------------------------
+# Binary sensors
+# -----------------------------------------------------------------------------
+binary_sensor:
+  - platform: template
+    name: "GEA Bus Connected"
+    entity_category: diagnostic
+    device_class: connectivity
+    lambda: return id(gea_hub).is_bus_connected();
+
+  # 0x3037: 0x00 = open, 0x01 = closed, so invert for device_class door
+  - platform: gea
+    gea_id: gea_hub
+    name: "Door"
+    erd: 0x3037
+    device_class: door
+    inverted: true
+
+  - platform: gea
+    gea_id: gea_hub
+    id: dw_cycle_complete
+    name: "Cycle Complete"
+    erd: 0xD003
+    icon: mdi:check-circle
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Leak Detected"
+    erd: 0x301D
+    device_class: moisture
+    icon: mdi:water-alert
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Sabbath Mode"
+    erd: 0x0009
+    entity_category: diagnostic
+    icon: mdi:candle
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Filter Clean Reminder"
+    erd: 0x3003
+    bitmask: 0x01
+    device_class: problem
+    entity_category: diagnostic
+    icon: mdi:air-filter
+
+  # Actuator telemetry
+  - platform: gea
+    gea_id: gea_hub
+    name: "Drain Pump Running"
+    erd: 0x303D
+    device_class: running
+    entity_category: diagnostic
+    icon: mdi:pump
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Water Valve Open"
+    erd: 0x303F
+    device_class: opening
+    entity_category: diagnostic
+    icon: mdi:valve
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Heater Active"
+    erd: 0x3046
+    device_class: heat
+    entity_category: diagnostic
+    icon: mdi:heating-coil
+
+# -----------------------------------------------------------------------------
+# Numeric sensors
+# -----------------------------------------------------------------------------
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal dB"
+    update_interval: 30s
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    id: dw_time_remaining
+    name: "Time Remaining"
+    erd: 0xD004
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    icon: mdi:timer
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Delay Start Remaining"
+    erd: 0x300D
+    decode: uint16_be
+    device_class: duration
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    icon: mdi:clock-start
+
+  # Native Fahrenheit. 75 (0x4B) is the "unknown" sentinel.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Water Temperature"
+    erd: 0x3035
+    decode: uint8
+    device_class: temperature
+    unit_of_measurement: "°F"
+    accuracy_decimals: 0
+    icon: mdi:thermometer-water
+    filters:
+      - lambda: |-
+          if (x == 75.0f) return {};
+          return x;
+
+  # 1000 is the "unknown" sentinel.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Turbidity"
+    erd: 0x3036
+    decode: uint16_be
+    unit_of_measurement: "NTU"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    icon: mdi:water-opacity
+    filters:
+      - lambda: |-
+          if (x == 1000.0f) return {};
+          return x;
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Circulation Pump Speed"
+    erd: 0x3045
+    decode: uint8
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    icon: mdi:pump
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Drain Pump Speed"
+    erd: 0x303E
+    decode: uint8
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    icon: mdi:pump
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Dry Fan Speed"
+    erd: 0x3049
+    decode: uint8
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    icon: mdi:fan
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Rinse Aid Level"
+    erd: 0x3038
+    decode: uint8
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    icon: mdi:cup-water
+
+  # Lifetime counters
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycles Started"
+    erd: 0x3009
+    decode: uint16_be
+    byte_offset: 0
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:counter
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycles Completed"
+    erd: 0x3009
+    decode: uint16_be
+    byte_offset: 2
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:counter
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Door Open Count"
+    erd: 0x3006
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:door
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Detergent Dispense Count"
+    erd: 0x301E
+    decode: uint16_be
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    icon: mdi:chart-bubble
+
+  # Derived cycle progress. The appliance never reports total cycle length, so
+  # this tracks the longest "time remaining" seen since the cycle started
+  # (dw_cycle_max_min) and divides by it. AutoSense revises its estimate upward
+  # during Sensing, which re-baselines this rather than breaking it.
+  - platform: template
+    id: dw_progress
+    name: "Cycle Progress"
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: mdi:progress-clock
+    update_interval: 5s
+    lambda: |-
+      std::string mode = id(dw_op_mode).has_state() ? id(dw_op_mode).state : std::string("");
+
+      if (id(dw_cycle_complete).state || mode == "End of Cycle") {
+        id(dw_cycle_max_min) = 0.0f;
+        return 100.0f;
+      }
+      if (mode != "Running" && mode != "Paused") {
+        id(dw_cycle_max_min) = 0.0f;
+        return 0.0f;
+      }
+
+      float rem = id(dw_time_remaining).has_state() ? id(dw_time_remaining).state : 0.0f;
+      if (rem > id(dw_cycle_max_min)) id(dw_cycle_max_min) = rem;
+      if (id(dw_cycle_max_min) <= 0.0f) return 0.0f;
+
+      float pct = (1.0f - (rem / id(dw_cycle_max_min))) * 100.0f;
+      if (pct < 0.0f) pct = 0.0f;
+      if (pct > 100.0f) pct = 100.0f;
+      return pct;
+
+  # User Settings (0x3007) bytes, internal: feed the panel controls below
+  - platform: gea
+    gea_id: gea_hub
+    id: uc_b0
+    erd: 0x3007
+    decode: uint8
+    byte_offset: 0
+    internal: true
+
+  - platform: gea
+    gea_id: gea_hub
+    id: uc_b1
+    erd: 0x3007
+    decode: uint8
+    byte_offset: 1
+    internal: true
+
+  - platform: gea
+    gea_id: gea_hub
+    id: uc_b2
+    erd: 0x3007
+    decode: uint8
+    byte_offset: 2
+    internal: true
+
+globals:
+  - id: dw_cycle_max_min
+    type: float
+    restore_value: no
+    initial_value: '0.0f'
+
+# -----------------------------------------------------------------------------
+# Text sensors
+# -----------------------------------------------------------------------------
+text_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    id: dw_op_mode
+    name: "Operating Mode"
+    erd: 0x3001
+    decode: uint8
+    icon: mdi:dishwasher
+    options:
+      0x00: "Low Power"
+      0x01: "Power Up"
+      0x02: "Standby"
+      0x03: "Delay Start"
+      0x04: "Paused"
+      0x05: "Running"
+      0x06: "End of Cycle"
+      0x07: "Download Mode"
+      0x08: "Sensor Check Mode"
+      0x09: "Load Activation Mode"
+      0x0B: "Machine Control Only"
+      0x0C: "User Alert"
+      0x0D: "Control Locked"
+      0x0E: "CSM"
+      0x0F: "WiFi Pairing"
+      0x10: "Rinse Aid Level Select"
+      0x11: "Sabbath Mode"
+      0x12: "Delay Paused"
+
+  - platform: gea
+    gea_id: gea_hub
+    id: dw_cycle_step
+    name: "Cycle Step"
+    erd: 0x300E
+    decode: uint8
+    icon: mdi:dishwasher
+    options:
+      0x00: "No Change"
+      0x01: "Prewash"
+      0x02: "Sensing"
+      0x03: "Main Wash"
+      0x04: "Drying"
+      0x05: "Sanitizing"
+      0x06: "Turbidity Calibration"
+      0x07: "Diverter Calibration"
+      0x08: "Paused"
+      0x09: "Rinsing"
+      0x0A: "Prewash 1"
+      0x0B: "Final Rinse"
+      0x0C: "End Prewash 1"
+      0x0D: "Auto Hot Start 1"
+      0x0E: "Auto Hot Start 2"
+      0x0F: "Auto Hot Start 3"
+      0x10: "Final Rinse Fill"
+      0x11: "Idle"
+      0x12: "End of Cycle"
+
+  # 0x301C: 20 ASCII bytes — [0..9] cycle name, [10..19] active sub-cycle.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Cycle Name"
+    erd: 0x301C
+    decode: ascii
+    icon: mdi:dishwasher
+    filters:
+      - lambda: |-
+          std::string n = x.substr(0, std::min(x.size(), (size_t)10));
+          while (!n.empty() && (n.back() == ' ' || n.back() == '\0')) n.pop_back();
+          return n;
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Sub-Cycle"
+    erd: 0x301C
+    decode: ascii
+    icon: mdi:dishwasher
+    filters:
+      - lambda: |-
+          if (x.size() < 11) return std::string("Inactive");
+          std::string cycle = x.substr(0, 10);
+          std::string sub = x.substr(10, std::min(x.size() - 10, (size_t)10));
+          while (!cycle.empty() && (cycle.back() == ' ' || cycle.back() == '\0')) cycle.pop_back();
+          while (!sub.empty() && (sub.back() == ' ' || sub.back() == '\0')) sub.pop_back();
+          if (sub.empty() || sub == cycle) return std::string("Inactive");
+          return sub;
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Diverter Position"
+    erd: 0x303A
+    decode: uint8
+    entity_category: diagnostic
+    icon: mdi:valve
+    options:
+      0x00: "Lower Primary"
+      0x01: "Mid/Upper"
+      0x02: "Lower Reverse"
+      0x03: "Utensil Jets"
+      0x04: "Unknown/Transition"
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Model Number"
+    erd: 0x0001
+    decode: ascii
+    entity_category: diagnostic
+    icon: mdi:identifier
+
+  # User Settings (0x3007) bit map. Names and positions are GE's; "tested"
+  # means writing the field from HA was confirmed on this dishwasher. Read
+  # mappings were also checked against 14 panel changes. Idle baseline 0x00 85 25.
+  #   byte0 b0-3 Delay Start        tested (1h -> 1, 12h -> 12)
+  #   byte0 b4-5 Zone Selection     tested (0 both, 1 lower, 2 upper)
+  #   byte0 b6   Demo Mode          not exposed
+  #   byte0 b7   Mute               tested (1 = silences the dishwasher)
+  #   byte1 b0   Steam              tested
+  #   byte1 b1   Control Locked     tested
+  #   byte1 b2-3 Dry Setting        tested (0 off, 1 heated dry)
+  #   byte1 b4-6 Wash Temperature   tested (0 normal, 1 boost, 2 sanitize)
+  #   byte1 b7   Rinse Aid Option   tested
+  #   byte2 b0   Bottle Blast       tested
+  #   byte2 b1-4 Selected Cycle     tested (0 Auto/1 Heavy/2 Normal/3 Light)
+  #   byte2 b5   Leak Pan Status    not exposed (no description from GE; reads 1)
+  #   byte2 b6   Door Wakeup        tested, INVERTED: 1 = door opening does NOT
+  #                                 wake the screen or chime
+  #   byte2 b7   Wifi Enabled       not exposed
+  - platform: gea
+    gea_id: gea_hub
+    name: "RAW User Configuration"
+    erd: 0x3007
+    decode: raw
+    entity_category: diagnostic
+    icon: mdi:tune
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "RAW Cycle Status"
+    erd: 0x3000
+    decode: raw
+    entity_category: diagnostic
+    icon: mdi:play-circle
+
+# =============================================================================
+# PANEL CONTROLS — all live inside ERD 0x3007 (User Settings)
+#
+# Fields share bytes (delay + zone in byte 0; steam, dry and wash temp in
+# byte 1), so a byte-granular write would clobber siblings. uc_write_bits does
+# a BIT-level read-modify-write: it takes the cached 0x3007 payload, rewrites
+# only the masked bits, primes the cache so the next poll doesn't fight it, and
+# writes all 3 bytes back. Fields no control covers (Demo Mode, Leak Pan
+# Status, Wifi Enabled) are preserved untouched.
+#
+# Writes are skipped (with a warning) until 0x3007 has been read once, since
+# unseen bits can't be preserved. Expect one skipped write right after boot.
+# =============================================================================
+script:
+  - id: uc_write_bits
+    mode: queued
+    parameters:
+      byte_idx: int
+      mask: int
+      shift: int
+      value: int
+    then:
+      - lambda: |-
+          const uint16_t ERD = 0x3007;
+          const std::vector<uint8_t> *cached = id(gea_hub).get_cached_erd(ERD);
+          if (cached == nullptr || cached->size() < 3) {
+            ESP_LOGW("uc", "0x3007 not read yet — write skipped to avoid clobbering unseen bits");
+            return;
+          }
+          std::vector<uint8_t> b = *cached;
+          b[byte_idx] = (uint8_t) ((b[byte_idx] & ~mask) | ((value << shift) & mask));
+          ESP_LOGI("uc", "0x3007 -> %02X %02X %02X", b[0], b[1], b[2]);
+          id(gea_hub).prime_erd_cache(ERD, b);
+          id(gea_hub).write_erd(ERD, b);
+          // Publish to the internal byte sensors too, or the template controls
+          // read the OLD value until the next 0x3007 poll lands and a changed
+          // setting visibly snaps back before settling.
+          id(uc_b0).publish_state(b[0]);
+          id(uc_b1).publish_state(b[1]);
+          id(uc_b2).publish_state(b[2]);
+
+select:
+  # byte 2, bits 1-4. Index map confirmed by writing each value.
+  - platform: template
+    name: "Cycle"
+    icon: mdi:dishwasher
+    optimistic: false
+    update_interval: 5s
+    options: ["Auto Sense", "Heavy", "Normal", "Light"]
+    lambda: |-
+      if (!id(uc_b2).has_state()) return {};
+      switch ((((int) id(uc_b2).state) >> 1) & 0x0F) {
+        case 0: return {"Auto Sense"};
+        case 1: return {"Heavy"};
+        case 2: return {"Normal"};
+        case 3: return {"Light"};
+      }
+      return {};
+    set_action:
+      - script.execute:
+          id: uc_write_bits
+          byte_idx: 2
+          mask: 0x1E
+          shift: 1
+          value: !lambda |-
+            if (x == "Heavy") return 1;
+            if (x == "Normal") return 2;
+            if (x == "Light") return 3;
+            return 0;
+
+  # byte 1, bits 4-6
+  - platform: template
+    name: "Wash Temp"
+    icon: mdi:thermometer
+    optimistic: false
+    update_interval: 5s
+    options: ["Normal", "Boost", "Sanitize"]
+    lambda: |-
+      if (!id(uc_b1).has_state()) return {};
+      switch ((((int) id(uc_b1).state) >> 4) & 0x07) {
+        case 0: return {"Normal"};
+        case 1: return {"Boost"};
+        case 2: return {"Sanitize"};
+      }
+      return {};
+    set_action:
+      - script.execute:
+          id: uc_write_bits
+          byte_idx: 1
+          mask: 0x70
+          shift: 4
+          value: !lambda |-
+            if (x == "Boost") return 1;
+            if (x == "Sanitize") return 2;
+            return 0;
+
+  # byte 0, bits 4-5
+  - platform: template
+    name: "Wash Zone"
+    icon: mdi:dishwasher
+    optimistic: false
+    update_interval: 5s
+    options: ["Both", "Lower", "Upper"]
+    lambda: |-
+      if (!id(uc_b0).has_state()) return {};
+      switch ((((int) id(uc_b0).state) >> 4) & 0x03) {
+        case 0: return {"Both"};
+        case 1: return {"Lower"};
+        case 2: return {"Upper"};
+      }
+      return {};
+    set_action:
+      - script.execute:
+          id: uc_write_bits
+          byte_idx: 0
+          mask: 0x30
+          shift: 4
+          value: !lambda |-
+            if (x == "Lower") return 1;
+            if (x == "Upper") return 2;
+            return 0;
+
+# restore_mode: DISABLED on every switch — a restoring template switch fires
+# its turn_on/turn_off action at boot, which would write the appliance's panel
+# from stale flash instead of reading it off the bus.
+switch:
+  # byte 1, bit 0
+  - platform: template
+    name: "Steam"
+    icon: mdi:kettle-steam
+    optimistic: false
+    restore_mode: DISABLED
+    lambda: |-
+      if (!id(uc_b1).has_state()) return {};
+      return (((int) id(uc_b1).state) & 0x01) != 0;
+    turn_on_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 1, mask: 0x01, shift: 0, value: 1}
+    turn_off_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 1, mask: 0x01, shift: 0, value: 0}
+
+  # byte 1, bits 2-3 (0 = off, 1 = heated dry)
+  - platform: template
+    name: "Heated Dry"
+    icon: mdi:tumble-dryer
+    optimistic: false
+    restore_mode: DISABLED
+    lambda: |-
+      if (!id(uc_b1).has_state()) return {};
+      return ((((int) id(uc_b1).state) >> 2) & 0x03) != 0;
+    turn_on_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 1, mask: 0x0C, shift: 2, value: 1}
+    turn_off_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 1, mask: 0x0C, shift: 2, value: 0}
+
+  # byte 1, bit 1 — GE's "Control Locked"
+  - platform: template
+    name: "Panel Lock"
+    icon: mdi:lock
+    optimistic: false
+    restore_mode: DISABLED
+    lambda: |-
+      if (!id(uc_b1).has_state()) return {};
+      return ((((int) id(uc_b1).state) >> 1) & 0x01) != 0;
+    turn_on_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 1, mask: 0x02, shift: 1, value: 1}
+    turn_off_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 1, mask: 0x02, shift: 1, value: 0}
+
+  # byte 2, bit 0
+  - platform: template
+    name: "Bottle Jets"
+    icon: mdi:bottle-wine
+    optimistic: false
+    restore_mode: DISABLED
+    lambda: |-
+      if (!id(uc_b2).has_state()) return {};
+      return (((int) id(uc_b2).state) & 0x01) != 0;
+    turn_on_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 2, mask: 0x01, shift: 0, value: 1}
+    turn_off_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 2, mask: 0x01, shift: 0, value: 0}
+
+  # byte 1, bit 7 — GE's "Rinse Aid Option"
+  - platform: template
+    name: "Rinse Aid"
+    icon: mdi:cup-water
+    optimistic: false
+    restore_mode: DISABLED
+    lambda: |-
+      if (!id(uc_b1).has_state()) return {};
+      return ((((int) id(uc_b1).state) >> 7) & 0x01) != 0;
+    turn_on_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 1, mask: 0x80, shift: 7, value: 1}
+    turn_off_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 1, mask: 0x80, shift: 7, value: 0}
+
+  # byte 0, bit 7 — GE's "Mute". On silences the dishwasher's sounds.
+  - platform: template
+    name: "Mute"
+    icon: mdi:volume-off
+    optimistic: false
+    restore_mode: DISABLED
+    lambda: |-
+      if (!id(uc_b0).has_state()) return {};
+      return ((((int) id(uc_b0).state) >> 7) & 0x01) != 0;
+    turn_on_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 0, mask: 0x80, shift: 7, value: 1}
+    turn_off_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 0, mask: 0x80, shift: 7, value: 0}
+
+  # byte 2, bit 6 — GE's "Door Wakeup", which is INVERTED on this dishwasher:
+  # bit 1 stops the door from waking the screen and chime. The switch reads
+  # ON when the door does wake them (bit 0, the default).
+  - platform: template
+    name: "Door Wakeup"
+    icon: mdi:door-open
+    optimistic: false
+    restore_mode: DISABLED
+    lambda: |-
+      if (!id(uc_b2).has_state()) return {};
+      return ((((int) id(uc_b2).state) >> 6) & 0x01) == 0;
+    turn_on_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 2, mask: 0x40, shift: 6, value: 0}
+    turn_off_action:
+      - script.execute: {id: uc_write_bits, byte_idx: 2, mask: 0x40, shift: 6, value: 1}
+
+number:
+  # byte 0, bits 0-3. Field holds 0-15; the panel offers up to 12 h.
+  # 0 = no delay. Verified: 1 h -> 0x01, 12 h -> 0x0C.
+  - platform: template
+    name: "Delay Start"
+    icon: mdi:clock-start
+    unit_of_measurement: h
+    optimistic: false
+    update_interval: 5s
+    min_value: 0
+    max_value: 12
+    step: 1
+    mode: slider
+    lambda: |-
+      if (!id(uc_b0).has_state()) return {};
+      return (float) (((int) id(uc_b0).state) & 0x0F);
+    set_action:
+      - script.execute:
+          id: uc_write_bits
+          byte_idx: 0
+          mask: 0x0F
+          shift: 0
+          value: !lambda 'return (int) x;'
+
+# =============================================================================
+# START / STOP — NOT IMPLEMENTED
+#
+# ERD 0x3000 Cycle Status is READ-ONLY in GE's definitions (read, publish,
+# subscribe — no write), so it reports a cycle rather than starting one. GE's
+# layout, one byte each: Cycle Running, Active Cycle, Active Cycle Step, Steps
+# Executed, Steps Estimated, then a bitfield of options allowed for the running
+# cycle (b0 Heated Dry, b1 Boost, b2 Sani, b3 Wash Zones, b4 Steam, b5 Bottle
+# Blast). On this dishwasher it read 0x01 34 02 3B 3A 3F while idle, so Cycle
+# Running is not a simple 0/1 run flag either.
+#
+# No other ERD this dishwasher answers to starts a cycle. Even if one turned
+# up, there is no remote-start interlock on GEA2, so nothing would stop a
+# write from running the machine with the door unlatched.
+# =============================================================================
+
+# =============================================================================
+# ALSO PRESENT ON THIS APPLIANCE, NOT WIRED UP:
+#   0x0002 Serial Number (ascii)     0x0008 Appliance Type
+#   0x300C Dish Personality          0x300F Analog Inputs
+#   0x3008 Error                     0x3015 Inlet Flow Rate
+#   0x301A CSM Life Count            0x301B CSM Fault Data
+#   0x301F PODS Count                0x3020 Usage Profile
+#   0x3039 Water Volume              0x3042 Cycles To Turbidity Calibration
+#   0x3043 Turbidity Calib Attempts  0x304B Fan 2 Speed Percentage
+#   0x304D System Software Versions  0xD001 DSM Override Status
+#   0xD002 DSM Override Allowed      0xD005 DSM Power Usage
+#
+# To probe one, add a text_sensor with `decode: raw` and watch it while
+# operating the appliance.
+#
+# DO NOT write 0x300C (personality) — it selects the model parametric set.
+# =============================================================================
