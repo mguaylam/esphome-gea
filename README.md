@@ -1,3 +1,5 @@
+![esphome-gea](docs/logo.svg)
+
 # esphome-gea
 
 [![Validate](https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml)
@@ -166,3 +168,7 @@ Got a working config for another appliance? PRs welcome.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+**About the logo.** It is a GEA frame. The two amber bars are the `0xE2` and `0xE3` bytes that open and close every frame on the bus, and the three blue cells are payload bytes, here spelling G, E, A. The colours are those of the frame diagram in [Protocol & internals](docs/protocol.md). The letters are drawn as paths rather than set in a font, and the colours were picked to hold on both light and dark backgrounds, so one file renders the same everywhere. A reduced form without the letters, [`docs/logo-mark.svg`](docs/logo-mark.svg), is there for small sizes.
