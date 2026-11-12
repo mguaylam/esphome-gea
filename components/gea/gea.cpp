@@ -333,10 +333,8 @@ bool GEAComponent::gea2_bus_clear_() const {
 // through untouched, and leave the echo outstanding.
 //
 // A damaged frame in that window (too short, or failing its CRC) is what two
-// overlapping transmissions look like once the parser reaches an ETX.  Both
-// frames are lost, so the pending request is retried after a short random
-// backoff (the randomness breaks lockstep with the other node's own retry)
-// instead of waiting out the full request timeout.
+// overlapping transmissions look like once the parser reaches an ETX — a
+// collision (gea2_collision_).
 bool GEAComponent::settle_gea2_echo_(const std::vector<uint8_t> &pkt) {
   bool intact = false;
   if (pkt.size() >= 6) {
@@ -351,9 +349,17 @@ bool GEAComponent::settle_gea2_echo_(const std::vector<uint8_t> &pkt) {
     }
     return true;
   }
+  gea2_collision_("damaged frame");
+  return false;
+}
+
+// Our transmission overlapped another node's: both frames are lost.  Retry the
+// pending request after a short random backoff (the randomness breaks lockstep
+// with the other node's own retry) instead of waiting out the full request
+// timeout.  `evidence` names what gave the collision away, for the log.
+void GEAComponent::gea2_collision_(const char *evidence) {
   tx_collisions_++;
-  ESP_LOGD(TAG, "GEA2 collision: damaged frame (%zu bytes) while our echo was outstanding — scheduling fast retry",
-           pkt.size());
+  ESP_LOGD(TAG, "GEA2 collision: %s while our echo was outstanding — scheduling fast retry", evidence);
   gea2_echo_pending_ = false;
   if (pending_active_) {
     // Backdate the send timestamp so the regular timeout machinery fires
@@ -361,7 +367,6 @@ bool GEAComponent::settle_gea2_echo_(const std::vector<uint8_t> &pkt) {
     uint32_t backoff = GEA2_COLLISION_BACKOFF_MIN_MS + (random_uint32() % GEA2_COLLISION_BACKOFF_SPAN_MS);
     pending_.sent_at_ms = millis() - REQUEST_TIMEOUT_MS + backoff;
   }
-  return false;
 }
 
 // Returns true if an incoming response's command and request ID match the
@@ -662,6 +667,10 @@ void GEAComponent::loop() {
              (unsigned)RX_FRAME_TIMEOUT_MS, rx_buf_.size());
     rx_buf_.clear();
     rx_state_ = RxState::IDLE;
+    // A frame cut short while our echo is outstanding is a damaged frame like
+    // any other: the overlap took the frame end with it.
+    if (gea2_echo_pending_)
+      gea2_collision_("truncated frame");
   }
 
   // Log RX stats every 10 s so we can confirm the UART is receiving at all.

@@ -264,12 +264,13 @@ node's address).
     so no separate comparison is kept);
   - an intact frame from another node is ordinary traffic that reached the
     parser first — it is handled normally and the echo stays outstanding;
-  - a damaged frame (too short, or failing its CRC) is what two overlapping
-    transmissions leave behind — a collision. The pending request is resent
-    after a short random backoff (2–19 ms) instead of waiting out the full
-    250 ms timeout. Detected collisions are counted (`get_tx_collisions()`
-    — see [Diagnostics](diagnostics.md)) and included in the periodic RX
-    stats log line.
+  - a damaged frame (too short, failing its CRC, or cut short and discarded
+    after 50 ms of silence) is what two overlapping transmissions leave
+    behind — a collision. The pending request is resent after a short
+    random backoff (2–19 ms) instead of waiting out the full 250 ms
+    timeout. Detected collisions are counted (`get_tx_collisions()` — see
+    [Diagnostics](diagnostics.md)) and included in the periodic RX stats
+    log line.
 
   Nothing is assumed about where the echo sits in the RX stream, so bytes
   from another node that are read before it are not mistaken for a
@@ -295,10 +296,10 @@ node's address).
   back. Since the retry has to wait for the frame to end and the bus to go
   quiet either way, the echo is judged once, when the frame completes —
   at 19200 baud a frame is 5–20 ms, so the difference is small.
-- **A collision that leaves no frame end is not caught early.** If the
-  overlap destroys the ETX, the parser has nothing to judge; the echo window
-  expires and the request is retried on the regular 250 ms timeout instead
-  of the fast backoff.
+- **A collision that leaves no frame end is caught late.** If the overlap
+  destroys the ETX, the parser has no frame to judge until it gives the
+  truncated one up after 50 ms of silence; the fast retry starts from there
+  rather than from the end of the frame.
 - **A small race window remains.** The bus-clear check runs in `loop()`, so
   another node can still start transmitting between the check and the
   write. The high-frequency loop shrinks that window to roughly millisecond

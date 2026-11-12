@@ -279,6 +279,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // GEA2 collision avoidance (bus-idle gate) and detection (TX echo check)
   bool gea2_bus_clear_() const;
   bool settle_gea2_echo_(const std::vector<uint8_t> &pkt);
+  void gea2_collision_(const char *evidence);
 
   // RX state machine
   void process_rx_byte_(uint8_t byte);
@@ -336,9 +337,10 @@ class GEAComponent : public uart::UARTDevice, public Component {
   static constexpr uint32_t GEA2_TX_IDLE_MS = 10;
   // Detection: every transmission comes back on RX as a frame of our own, and
   // is settled when the parser completes it — verified if it is intact, a
-  // collision if a damaged frame turns up instead (settle_gea2_echo_).  If
-  // neither happens within this window, assume it never will (TX open / RX
-  // mute) and unwedge.
+  // collision if a damaged frame turns up instead (settle_gea2_echo_), or if
+  // a frame is cut short and discarded (RX_FRAME_TIMEOUT_MS, which is shorter
+  // than this window for that reason).  If none of that happens within this
+  // window, assume it never will (TX open / RX mute) and unwedge.
   static constexpr uint32_t GEA2_ECHO_TIMEOUT_MS = 100;
   // A frame that starts (STX) but never terminates (ETX) must not hold the
   // parser out of IDLE indefinitely: that wedges gea2_bus_clear_() and
