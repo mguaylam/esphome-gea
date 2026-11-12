@@ -1,0 +1,396 @@
+# ESPHome config for a Bradford White AeroTherm heat pump water heater via GEA2 — read-only
+# Appliance: Bradford White AeroTherm RE2H65T10-1NCTT (65 gal, 240 V)
+# Hardware: FirstBuild "GE Appliances Home Assistant Adapter" (Seeed XIAO ESP32-C3 on a carrier that routes the
+#   RJ45 jack's serial line to GPIO9/GPIO10 and powers the board from the jack), on the front-panel RJ45 port
+# Framework: ESP-IDF
+# Baud rate: 19200 (GEA2)
+# TX = GPIO9, RX = GPIO10
+#
+# This file only reads. For setpoint and mode control on the same family see RE2H50S10.yaml.
+#
+# Findings worth not rediscovering (checked on this heater against the front panel, a separate power meter
+# and the panel's Service Mode, which switches each element, the compressor and the fan on by itself):
+# - The heater answers at bus address 0x60.
+# - Relay status 0x4068 is 2 bytes with the flags in the SECOND byte: 0x01 DLB (Double Line Break relay; on
+#   with any heating load, lingers up to ~17 s after it stops), 0x02 compressor, 0x04 LOWER element,
+#   0x08 UPPER element, 0x10 fan.
+#   Typical values: 0x0013 heat pump cycle, 0x0010 fan only, 0x0005 lower element, 0x0009 upper element.
+# - Probes: T1 (0x405F) is the bottom of the tank and drops when hot water is drawn; T2 (0x4060) is the top of
+#   the tank; T3a/T3b (0x4061/0x4062) evaporator inlet/outlet; T4 (0x4063) compressor discharge; T5 (0x4064)
+#   intake air, which only reads room air while the fan runs (several degrees high when idle). T6 (0x406E)
+#   reads 0xFFFF (not fitted).
+# - Mode 0x4020: 0 Hybrid Standard, 1 Electric (Only), 2 Heat Pump (Only), 3 Hybrid Plus, 4 Vacation.
+#   0x4028 counts down the timed modes (Electric (Only) starts at 72 h, Vacation at 168 h).
+#   Electric (Only) heated with the lower element.
+# - 0xD007 is documented as a cumulative energy counter, but its first 2 bytes are live watts here. It reads
+#   about 5% below a separate power meter and 0 W at idle.
+# - Current 0x4065 is in 0.1 A steps, rounded down: loads under ~24 W read 0 A. The compressor draws ~1.7 A,
+#   each element ~17 A.
+# - 0x4069 ("flow state" in GE's definitions) is not water flow here: it stayed 0 through a full hot-tap draw.
+#   It reads 8 from the fan pre-run to the end of each compressor run; 1, 9 and 11 also occur. Meaning unknown.
+# - The fan runs ~85 s before and ~19 min after each compressor run.
+# - Not verified: anode alarm 0x4081 (4 bytes, 0000FFFF when idle; the flag is assumed to be bit 0x01 of byte 0).
+# - Tank size 0x4041 reads 65. Anode hours 0x404D reads 0.
+# - poll_interval is the gap between each read: 17 ERDs at 500 ms refresh every value about every 8.5 s.
+#   About 5 hours at 500 ms, including a full heat pump cycle, showed no TX collisions and no frame timeouts.
+# - ERD meanings: geappliances/public-appliance-api-documentation (appliance_api_erd_definitions.json).
+esphome:
+  name: bw-water-heater
+  friendly_name: Bradford White Water Heater
+  comment: Bradford White AeroTherm RE2H65T10 via the FirstBuild GEA adapter (read-only)
+  project:
+    name: BradfordWhite.RE2H65T10
+    version: "1.0.0"
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "bw-water-heater fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+logger:
+  level: DEBUG
+  logs:
+    gea: WARN   # the hub logs several lines per read; the Bus sensors below cover bus health
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [gea]
+
+uart:
+  id: uart_gea
+  tx_pin: GPIO9
+  rx_pin: GPIO10
+  baud_rate: 19200
+
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  protocol: gea2
+  dest_address: 0x60
+  poll_interval: 500ms      # 17 ERDs -> ~8.5 s per full refresh
+
+sensor:
+  # Temperatures are sent as degrees F x 10; Home Assistant converts to display units.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Setpoint"   # what is set on the panel
+    icon: mdi:thermostat
+    erd: 0x4024
+    decode: int16_be
+    multiplier: 0.1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    accuracy_decimals: 1
+  - platform: gea
+    gea_id: gea_hub
+    name: "Setpoint Active"   # what the heater is using now
+    icon: mdi:thermostat
+    erd: 0x4026
+    decode: int16_be
+    multiplier: 0.1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    entity_category: diagnostic
+  # Allowed setpoint range: 100 to 140 F on this heater.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Setpoint Minimum"
+    icon: mdi:thermometer-low
+    erd: 0x4047
+    decode: uint16_be
+    byte_offset: 0
+    multiplier: 0.1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: "Setpoint Maximum"
+    icon: mdi:thermometer-high
+    erd: 0x4047
+    decode: uint16_be
+    byte_offset: 2
+    multiplier: 0.1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Tank Temperature Bottom"   # T1; drops when hot water is drawn
+    icon: mdi:water-thermometer
+    erd: 0x405F
+    decode: int16_be
+    multiplier: 0.1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+  - platform: gea
+    gea_id: gea_hub
+    name: "Tank Temperature Top"   # T2
+    icon: mdi:water-thermometer
+    erd: 0x4060
+    decode: int16_be
+    multiplier: 0.1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+  - platform: gea
+    gea_id: gea_hub
+    name: "Evaporator Temperature Inlet"   # T3a
+    icon: mdi:snowflake-thermometer
+    erd: 0x4061
+    decode: int16_be
+    multiplier: 0.1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: "Evaporator Temperature Outlet"   # T3b
+    icon: mdi:snowflake-thermometer
+    erd: 0x4062
+    decode: int16_be
+    multiplier: 0.1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: "Compressor Discharge Temperature"   # T4
+    icon: mdi:thermometer-high
+    erd: 0x4063
+    decode: int16_be
+    multiplier: 0.1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: "Intake Air Temperature"   # T5; only reads room air while the fan runs
+    icon: mdi:thermometer
+    erd: 0x4064
+    decode: int16_be
+    multiplier: 0.1
+    unit_of_measurement: "°F"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Current"   # 0.1 A steps, rounded down
+    icon: mdi:current-ac
+    erd: 0x4065
+    decode: uint16_be
+    multiplier: 0.1
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: "Voltage"
+    icon: mdi:sine-wave
+    erd: 0x4066
+    decode: uint16_be
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+  # Live watts (first 2 bytes of 0xD007), about 5% low. An estimate, not a meter.
+  - platform: gea
+    gea_id: gea_hub
+    name: "Power Estimate"
+    id: heater_power
+    icon: mdi:flash
+    erd: 0xD007
+    decode: uint16_be
+    byte_offset: 0
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    entity_category: diagnostic
+  - platform: integration
+    name: "Energy Estimate"
+    sensor: heater_power
+    icon: mdi:lightning-bolt
+    time_unit: h
+    integration_method: left
+    unit_of_measurement: "Wh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 0
+    restore: true
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: "Relay Status Raw"   # flags in the second byte; see the header
+    icon: mdi:numeric
+    erd: 0x4068
+    decode: uint16_be
+    entity_category: diagnostic
+
+  - platform: gea
+    gea_id: gea_hub
+    name: "Mode Raw"
+    id: mode_value
+    icon: mdi:numeric
+    erd: 0x4020
+    decode: uint8
+    entity_category: diagnostic
+    on_value:
+      then:
+        - text_sensor.template.publish:
+            id: mode_text
+            state: !lambda |-
+              switch ((int) x) {
+                case 0: return std::string("Hybrid Standard");
+                case 1: return std::string("Electric (Only)");
+                case 2: return std::string("Heat Pump (Only)");
+                case 3: return std::string("Hybrid Plus");
+                case 4: return std::string("Vacation");
+                default: return std::string("Unknown (") + to_string((int) x) + ")";
+              }
+  - platform: gea
+    gea_id: gea_hub
+    name: "Mode Timed Hours Remaining"
+    icon: mdi:timer-sand
+    erd: 0x4028
+    decode: uint16_be
+    unit_of_measurement: "h"
+  - platform: gea
+    gea_id: gea_hub
+    name: "Heating State Raw"   # 0x4069; not water flow, meaning unknown (see the header)
+    icon: mdi:numeric
+    erd: 0x4069
+    decode: uint8
+    entity_category: diagnostic
+
+  # Bus health: counters since boot, all should stay at 0.
+  - platform: template
+    name: "Bus Collisions"
+    icon: mdi:counter
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    state_class: total_increasing
+    lambda: 'return id(gea_hub).get_tx_collisions();'
+    update_interval: 60s
+  - platform: template
+    name: "Bus Frame Timeouts"
+    icon: mdi:counter
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    state_class: total_increasing
+    lambda: 'return id(gea_hub).get_rx_frame_timeouts();'
+    update_interval: 60s
+  - platform: template
+    name: "Bus Dropped Requests"
+    icon: mdi:counter
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    state_class: total_increasing
+    lambda: 'return id(gea_hub).get_dropped_requests();'
+    update_interval: 60s
+  - platform: template
+    name: "Bus CRC Errors"
+    icon: mdi:counter
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    state_class: total_increasing
+    lambda: 'return id(gea_hub).get_crc_errors();'
+    update_interval: 60s
+
+text_sensor:
+  # The mode in the panel's wording, published from Mode Raw above.
+  - platform: template
+    name: "Mode"
+    id: mode_text
+    icon: mdi:water-boiler-auto
+
+binary_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Compressor"
+    icon: mdi:heat-pump
+    erd: 0x4068
+    byte_offset: 1
+    bitmask: 0x02
+    device_class: running
+  - platform: gea
+    gea_id: gea_hub
+    name: "Element Upper"
+    icon: mdi:heating-coil
+    erd: 0x4068
+    byte_offset: 1
+    bitmask: 0x08
+    device_class: running
+  - platform: gea
+    gea_id: gea_hub
+    name: "Element Lower"
+    icon: mdi:heating-coil
+    erd: 0x4068
+    byte_offset: 1
+    bitmask: 0x04
+    device_class: running
+  - platform: gea
+    gea_id: gea_hub
+    name: "Fan"
+    icon: mdi:fan
+    erd: 0x4068
+    byte_offset: 1
+    bitmask: 0x10
+    device_class: running
+  - platform: gea
+    gea_id: gea_hub
+    name: "DLB Relay"   # lingers ~17 s after heating stops, so not for exact timing
+    icon: mdi:electric-switch
+    erd: 0x4068
+    byte_offset: 1
+    bitmask: 0x01
+    entity_category: diagnostic
+  - platform: gea
+    gea_id: gea_hub
+    name: "Anode Alarm"   # not verified: it has never tripped
+    icon: mdi:alert-circle-outline
+    erd: 0x4081
+    byte_offset: 0
+    bitmask: 0x01
+    device_class: problem
+  # On when the heater has answered in the last 30 s. If off, every other value is stale.
+  - platform: template
+    name: "Bus Connected"
+    device_class: connectivity
+    entity_category: diagnostic
+    lambda: 'return id(gea_hub).is_bus_connected();'
