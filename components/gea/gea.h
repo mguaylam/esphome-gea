@@ -343,10 +343,14 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // A frame that starts (STX) but never terminates (ETX) must not hold the
   // parser out of IDLE indefinitely: that wedges gea2_bus_clear_() and
   // deadlocks the GEA2 poller.  Measured as silence since the last received
-  // byte (last_rx_byte_ms_).  A maximum-length frame is 255 bytes, which is
-  // ~133 ms on the wire at 19200 baud and ~11 ms at 230400, so this window
-  // cannot fire on a legitimately slow frame.
-  static constexpr uint32_t RX_FRAME_TIMEOUT_MS = 400;
+  // byte (last_rx_byte_ms_), checked after RX has been drained.  A frame has
+  // no gaps between its bytes on the wire — GE's reference firmware
+  // (tiny-gea-api) abandons a GEA2 frame after 6 ms of inter-byte silence —
+  // so the only gap seen here is how the UART hands bytes over: with ESPHome's
+  // defaults at most ~10 ms apart on ESP32.  50 ms clears that with margin.
+  // (An ESP32 `rx_full_threshold` raised to its 120-byte maximum hands a
+  // longer GEA2 frame over in 62 ms steps and would trip this.)
+  static constexpr uint32_t RX_FRAME_TIMEOUT_MS = 50;
   // Hard ceiling on the unescaped frame buffer.  LEN is a single byte, so no
   // legitimate frame exceeds 255 bytes; anything larger is line noise.
   static constexpr size_t RX_FRAME_MAX_BYTES = 260;
