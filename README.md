@@ -1,12 +1,18 @@
-# esphome-gea
+<p align="center">
+  <img src="docs/logo.svg" alt="esphome-gea logo" width="200">
+</p>
 
-[![Validate](https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml)
-[![Test](https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml)
-[![Lint](https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml)
-[![ESPHome](https://img.shields.io/badge/ESPHome-external%20component-blue?logo=esphome)](https://esphome.io/components/external_components)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-compatible-41bdf5?logo=home-assistant)](https://www.home-assistant.io/)
-[![ESP32](https://img.shields.io/badge/ESP32-supported-red?logo=espressif)](https://www.espressif.com/)
+<h1 align="center">esphome-gea</h1>
+
+<p align="center">
+  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml"><img src="https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml/badge.svg" alt="Validate"></a>
+  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml"><img src="https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml/badge.svg" alt="Test"></a>
+  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml"><img src="https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml/badge.svg" alt="Lint"></a>
+  <a href="https://esphome.io/components/external_components"><img src="https://img.shields.io/badge/ESPHome-external%20component-blue?logo=esphome" alt="ESPHome"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://www.home-assistant.io/"><img src="https://img.shields.io/badge/Home%20Assistant-compatible-41bdf5?logo=home-assistant" alt="Home Assistant"></a>
+  <a href="https://www.espressif.com/"><img src="https://img.shields.io/badge/ESP32-supported-red?logo=espressif" alt="ESP32"></a>
+</p>
 
 An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances — and other appliances supporting the GEA bus — via the **GEA2 or GEA3 serial bus**, with native [Home Assistant](https://www.home-assistant.io/) integration.
 
@@ -166,3 +172,7 @@ Got a working config for another appliance? PRs welcome.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+**About the logo.** It is a GEA frame. The two amber bars are the `0xE2` and `0xE3` bytes that open and close every frame on the bus, and the three blue cells are payload bytes, here spelling G, E, A. The colours are those of the frame diagram in [Protocol & internals](docs/protocol.md). The letters are drawn as paths rather than set in a font, and the colours were picked to hold on both light and dark backgrounds, so one file renders the same everywhere. A reduced form without the letters, [`docs/logo-mark.svg`](docs/logo-mark.svg), is there for small sizes.
