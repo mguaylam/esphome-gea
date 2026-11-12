@@ -38,8 +38,7 @@ class GEANumber : public number::Number, public GEAEntity, public Component {
     uint32_t val = (uint32_t)(int32_t)raw;
     std::vector<uint8_t> data;
     encode_to_bytes(val, data);
-    if (parent_)
-      parent_->write_erd(get_write_erd(), data);
+    write_value_at_offset_(data);
     publish_state(value);
   }
 };

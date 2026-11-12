@@ -105,6 +105,41 @@ void GEAEntity::encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const {
   }
 }
 
+void GEAEntity::write_value_at_offset_(const std::vector<uint8_t> &value_bytes) const {
+  if (parent_ == nullptr)
+    return;
+  const uint16_t erd = get_write_erd();
+  const uint8_t off = byte_offset_;
+
+  const std::vector<uint8_t> *cached = parent_->get_cached_erd(erd);
+  if (cached == nullptr) {
+    if (off != 0) {
+      // Partial write into a payload we've never read — we can't know the other
+      // bytes, so refuse rather than zero-fill and clobber them. The cache fills
+      // in within a poll cycle (GEA2) or on the next publication (GEA3).
+      ESP_LOGW(TAG,
+               "Write to ERD 0x%04X at offset %u skipped: value not read yet, "
+               "can't preserve the other bytes",
+               erd, off);
+      return;
+    }
+    // Offset 0 and nothing cached: keep the historical behaviour of writing the
+    // encoded value as the entire ERD.
+    parent_->write_erd(erd, value_bytes);
+    return;
+  }
+
+  // Read-modify-write: start from the last full payload, overlay our bytes.
+  std::vector<uint8_t> buf = *cached;
+  if ((size_t)off + value_bytes.size() > buf.size())
+    buf.resize((size_t)off + value_bytes.size(), 0);
+  for (size_t i = 0; i < value_bytes.size(); i++)
+    buf[(size_t)off + i] = value_bytes[i];
+
+  parent_->prime_erd_cache(erd, buf);
+  parent_->write_erd(erd, buf);
+}
+
 // =============================================================================
 // GEAComponent — protocol utilities
 // =============================================================================
@@ -206,9 +241,9 @@ void GEAComponent::send_ack_() {
 
 // Send a framed publication acknowledgement: [CMD_PUB_ACK][context][request_id].
 // The context and request_id must echo the values from the publication header.
-void GEAComponent::send_pub_ack_(uint8_t context, uint8_t request_id) {
+void GEAComponent::send_pub_ack_(uint8_t dest, uint8_t context, uint8_t request_id) {
   std::vector<uint8_t> payload = {CMD_PUB_ACK, context, request_id};
-  send_packet_(dest_addr_, payload);
+  send_packet_(dest, payload);
 }
 
 // Trigger ERD discovery: the appliance responds with a publication (0xA6) for
@@ -612,14 +647,28 @@ void GEAComponent::loop() {
     gea2_echo_idx_ = 0;
   }
 
+  // A frame that started but never terminated must not hold the parser out of
+  // IDLE.  On GEA2 this is a hard deadlock: gea2_bus_clear_() refuses to
+  // transmit while rx_state_ != IDLE, but the appliance only speaks when
+  // polled — so no further bytes arrive to resynchronise the parser, and the
+  // poller never recovers.  Truncation itself is expected (a blocked main loop
+  // can overrun the UART FIFO); being unable to recover from it is the bug.
+  if (rx_state_ != RxState::IDLE && millis() - last_rx_byte_ms_ >= RX_FRAME_TIMEOUT_MS) {
+    rx_frame_timeouts_++;
+    ESP_LOGW(TAG, "RX: frame incomplete after %u ms (%zu bytes buffered) — discarding and resynchronising",
+             (unsigned)RX_FRAME_TIMEOUT_MS, rx_buf_.size());
+    rx_buf_.clear();
+    rx_state_ = RxState::IDLE;
+  }
+
   // Log RX stats every 10 s so we can confirm the UART is receiving at all.
   uint32_t now_stats = millis();
   if (now_stats - last_stats_ms_ >= 10000) {
     uint32_t window = now_stats - last_stats_ms_;
     last_stats_ms_ = now_stats;
     if (protocol_ == Protocol::GEA2) {
-      ESP_LOGD(TAG, "RX stats: %u bytes total, %u TX collisions, bus %s", rx_byte_count_, tx_collisions_,
-               is_bus_connected() ? "CONNECTED" : "no valid packets yet");
+      ESP_LOGD(TAG, "RX stats: %u bytes total, %u TX collisions, %u frame timeouts, bus %s", rx_byte_count_,
+               tx_collisions_, rx_frame_timeouts_, is_bus_connected() ? "CONNECTED" : "no valid packets yet");
       // Measured bus occupancy: fraction of the window spent in our GEA2
       // read/write round-trips. The complement is the real headroom left for
       // the appliance's own traffic — the live counterpart to the estimate
@@ -647,9 +696,16 @@ void GEAComponent::loop() {
 #ifdef GEA_GEA2_DISCOVERY
     if (gea2_discovery_ && discovery_state_ == DiscoveryState::SCANNING) {
       // During discovery: enqueue one read at a time with no inter-read delay.
-      // Only fire when the queue and pending slot are both clear.
-      if (!pending_active_ && request_queue_.empty())
-        discovery_enqueue_next_();
+      // Only fire when the queue and pending slot are both clear. Gate scan
+      // progress on bus liveness — while the bus is quiet, probe instead of
+      // advancing, so a dead bus never burns through the table or persists an
+      // empty result.
+      if (!pending_active_ && request_queue_.empty()) {
+        if (is_bus_connected())
+          discovery_enqueue_next_();
+        else
+          discovery_probe_bus_();
+      }
     } else {
 #endif
       // Per-ERD polling of declared entities. poll_next_() picks the most
@@ -983,13 +1039,20 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
       if (byte == GEA_STX) {
         // Unexpected re-sync: restart frame.
         rx_buf_.clear();
-      } else if (byte == GEA_ESC) {
-        rx_state_ = RxState::ESCAPE;
       } else if (byte == GEA_ETX) {
         // End of frame — validate and dispatch.
         process_packet_(rx_buf_);
         rx_state_ = RxState::IDLE;
         rx_buf_.clear();
+      } else if (rx_buf_.size() >= RX_FRAME_MAX_BYTES) {
+        // LEN is one byte, so no real frame reaches this size: the stream has
+        // desynchronised.  Drop it rather than growing the buffer without bound.
+        // Checked before ESC so the escaped byte cannot push past the ceiling.
+        ESP_LOGW(TAG, "RX: frame exceeded %zu bytes without ETX — resynchronising", RX_FRAME_MAX_BYTES);
+        rx_buf_.clear();
+        rx_state_ = RxState::IDLE;
+      } else if (byte == GEA_ESC) {
+        rx_state_ = RxState::ESCAPE;
       } else {
         rx_buf_.push_back(byte);
       }
@@ -1267,7 +1330,7 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
         log_discovery_(erd, data);
         dispatch_erd_(erd, data);
       }
-      send_pub_ack_(context, pub_req_id);
+      send_pub_ack_(src, context, pub_req_id);
       break;
     }
 
@@ -1373,7 +1436,8 @@ void GEAComponent::discovery_init_() {
       ESP_LOGI(TAG, "GEA2 discovery: resuming at %zu / %zu (%zu found so far)", discovery_index_,
                GEA2_DISCOVERY_TABLE_SIZE, discovery_found_erds_.size());
     } else {
-      ESP_LOGI(TAG, "GEA2 discovery: starting full scan (%zu ERDs) — this takes ~20-30 min", GEA2_DISCOVERY_TABLE_SIZE);
+      ESP_LOGI(TAG, "GEA2 discovery: armed for a full scan (%zu ERDs, ~20-30 min) — starts once the bus responds",
+               GEA2_DISCOVERY_TABLE_SIZE);
     }
   }
 }
@@ -1395,6 +1459,28 @@ void GEAComponent::discovery_enqueue_next_() {
   req.sent_at_ms = 0;
   req.is_discovery = true;
   request_queue_.push_back(std::move(req));
+}
+
+// Liveness probe used while the bus looks quiet: a throttled plain read of a
+// universal ERD. It is NOT flagged is_discovery, so its response is handled as
+// an ordinary read (refreshing is_bus_connected()) and never touches the scan
+// bitmap. Once it answers, the loop resumes advancing the scan.
+void GEAComponent::discovery_probe_bus_() {
+  uint32_t now = millis();
+  if (now - discovery_probe_ms_ < DISCOVERY_PROBE_INTERVAL_MS)
+    return;
+  discovery_probe_ms_ = now;
+  std::vector<uint8_t> body = {0x01, (uint8_t)(GEA2_LIVENESS_ERD >> 8), (uint8_t)(GEA2_LIVENESS_ERD & 0xFF)};
+  PendingRequest req;
+  req.cmd = CMD_GEA2_READ;
+  req.req_id = next_req_id_();
+  req.dest = dest_addr_;
+  req.body = std::move(body);
+  req.retries_left = 0;      // single attempt; the throttle re-issues
+  req.is_discovery = false;  // ordinary read — must not mark the scan bitmap
+  req.sent_at_ms = 0;
+  request_queue_.push_back(std::move(req));
+  ESP_LOGD(TAG, "GEA2 discovery: bus quiet — liveness probe of ERD 0x%04X", GEA2_LIVENESS_ERD);
 }
 
 void GEAComponent::discovery_on_response_(uint16_t erd) {

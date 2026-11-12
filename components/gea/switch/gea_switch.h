@@ -29,9 +29,10 @@ class GEASwitch : public switch_::Switch, public GEAEntity, public Component {
  protected:
   // Called when the user toggles the switch in HA
   void write_state(bool state) override {
-    std::vector<uint8_t> data = {state ? on_value_ : off_value_};
-    if (parent_)
-      parent_->write_erd(get_write_erd(), data);
+    // Read-modify-write at byte_offset_ so a switch bound to one byte of a
+    // multi-byte ERD (e.g. one ice maker on 0x100A) leaves the others intact.
+    uint8_t v = state ? on_value_ : off_value_;
+    write_value_at_offset_({v});
     publish_state(state);
   }
 

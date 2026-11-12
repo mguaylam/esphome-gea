@@ -123,6 +123,14 @@ class GEAEntity {
   // Used by writable entities (select, number) to convert a value back to ERD bytes.
   void encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const;
 
+  // Write value_bytes into the write ERD starting at byte_offset_, preserving the
+  // ERD's other bytes via read-modify-write against the hub's cached payload. This
+  // lets several entities share one multi-byte ERD (e.g. one switch per ice maker on
+  // 0x100A) without clobbering each other's bytes. At a non-zero offset with nothing
+  // cached yet the write is skipped (we can't preserve unknown bytes); at offset 0
+  // with no cache it falls back to writing value_bytes as the whole ERD.
+  void write_value_at_offset_(const std::vector<uint8_t> &value_bytes) const;
+
  public:
   // Common ERD info dump shared by every entity's dump_config().
   void dump_erd_config(const char *tag) const {
@@ -197,6 +205,23 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // ---- Called by writable entities (select, number, etc.) -----------------
   void write_erd(uint16_t erd, const std::vector<uint8_t> &data);
 
+  // Last full payload received for erd, or nullptr if none has been seen yet.
+  // Used by writable entities for read-modify-write into multi-byte ERDs.
+  const std::vector<uint8_t> *get_cached_erd(uint16_t erd) const {
+    auto it = discovered_erds_.find(erd);
+    return it == discovered_erds_.end() ? nullptr : &it->second;
+  }
+
+  // Optimistically overwrite the cached payload for an already-known ERD so a second
+  // entity on the same ERD read-modify-writes against the just-written value, even
+  // before the post-write re-read (GEA2) or publication (GEA3) lands. No-op if the
+  // ERD has never been received, so it never creates a blind or partial baseline.
+  void prime_erd_cache(uint16_t erd, const std::vector<uint8_t> &data) {
+    auto it = discovered_erds_.find(erd);
+    if (it != discovered_erds_.end())
+      it->second = data;
+  }
+
   // ---- Explicit read — enqueues a single ERD read request -----------------
   void read_erd(uint16_t erd);
 
@@ -242,6 +267,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   uint32_t get_tx_retries() const { return tx_retries_; }
   uint32_t get_dropped_requests() const { return dropped_requests_; }
   uint32_t get_tx_collisions() const { return tx_collisions_; }
+  uint32_t get_rx_frame_timeouts() const { return rx_frame_timeouts_; }
 
   // ---- on_erd_change triggers (registered from Python codegen) ------------
   void register_erd_change_trigger(ErdChangeTrigger *trigger) { erd_change_triggers_.push_back(trigger); }
@@ -251,7 +277,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   void send_packet_(uint8_t dest, const std::vector<uint8_t> &payload);
   void send_ack_();
   void send_subscribe_all_(uint8_t type = 0x00);
-  void send_pub_ack_(uint8_t context, uint8_t request_id);
+  void send_pub_ack_(uint8_t dest, uint8_t context, uint8_t request_id);
 
   // Request queue / retry machinery
   uint8_t next_req_id_();
@@ -324,6 +350,16 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // byte-for-byte against the bus echo.  If the echo never completes within
   // this window, assume it never will (TX open / RX mute) and unwedge.
   static constexpr uint32_t GEA2_ECHO_TIMEOUT_MS = 100;
+  // A frame that starts (STX) but never terminates (ETX) must not hold the
+  // parser out of IDLE indefinitely: that wedges gea2_bus_clear_() and
+  // deadlocks the GEA2 poller.  Measured as silence since the last received
+  // byte (last_rx_byte_ms_).  A maximum-length frame is 255 bytes, which is
+  // ~133 ms on the wire at 19200 baud and ~11 ms at 230400, so this window
+  // cannot fire on a legitimately slow frame.
+  static constexpr uint32_t RX_FRAME_TIMEOUT_MS = 400;
+  // Hard ceiling on the unescaped frame buffer.  LEN is a single byte, so no
+  // legitimate frame exceeds 255 bytes; anything larger is line noise.
+  static constexpr size_t RX_FRAME_MAX_BYTES = 260;
   // After a detected collision the pending request is retried after a short
   // random backoff (min + [0, span)) instead of the full request timeout.
   static constexpr uint32_t GEA2_COLLISION_BACKOFF_MIN_MS = 2;
@@ -352,6 +388,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // Raw byte counter — reported periodically so we can confirm UART is alive.
   uint32_t rx_byte_count_{0};
+  uint32_t rx_frame_timeouts_{0};  // frames discarded by RX_FRAME_TIMEOUT_MS
   uint32_t last_stats_ms_{0};
 
   // Diagnostics counters exposed via get_*() accessors.
@@ -419,8 +456,19 @@ class GEAComponent : public uart::UARTDevice, public Component {
   std::vector<uint16_t> discovery_found_erds_;  // ERDs that responded — info only
   ESPPreferenceObject discovery_pref_;
 
+  // Bus-liveness gate: the scan only advances while the bus is responsive, so a
+  // dead/unpowered bus at boot (or an appliance powered off mid-scan) never
+  // burns through all ERDs and persists a useless empty result. While the bus
+  // is quiet we periodically read a universal ERD (model number) until it
+  // answers — GEA2 has no spontaneous traffic, so is_bus_connected() can only
+  // turn true once one of our reads gets a response.
+  static constexpr uint16_t GEA2_LIVENESS_ERD = 0x0001;
+  static constexpr uint32_t DISCOVERY_PROBE_INTERVAL_MS = 2000;
+  uint32_t discovery_probe_ms_{0};
+
   void discovery_init_();
   void discovery_enqueue_next_();
+  void discovery_probe_bus_();
   void discovery_on_response_(uint16_t erd);
   void discovery_on_timeout_();
   void discovery_advance_();
