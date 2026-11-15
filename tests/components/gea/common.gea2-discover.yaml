@@ -11,8 +11,8 @@ logger:
 
 # ---------------------------------------------------------------------------
 # Hub — GEA2 mode with NO dest_address. The component probes the bus at boot
-# (broadcast read of a universal ERD) to discover the appliance address, then
-# polls normally. Exercises the active address-discovery code path.
+# (broadcast read of the appliance-type ERD) to discover the appliance address,
+# then polls normally. Exercises the active address-discovery code path.
 # ---------------------------------------------------------------------------
 gea:
   id: gea_hub

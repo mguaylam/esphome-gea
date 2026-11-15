@@ -321,6 +321,16 @@ bool GEAComponent::gea2_bus_clear_() const {
   return last_rx_byte_ms_ == 0 || millis() - last_rx_byte_ms_ >= GEA2_TX_IDLE_MS;
 }
 
+// True when pkt ([DEST][LEN][SRC][payload...][CRC_MSB][CRC_LSB]) is long enough
+// to be a frame and its CRC holds.
+bool GEAComponent::frame_crc_ok_(const std::vector<uint8_t> &pkt) {
+  if (pkt.size() < 6)
+    return false;
+  size_t crc_offset = pkt.size() - 2;
+  uint16_t rx_crc = ((uint16_t)pkt[crc_offset] << 8) | (uint16_t)pkt[crc_offset + 1];
+  return rx_crc == crc16_(pkt.data(), crc_offset);
+}
+
 // Settle the echo of our last GEA2 transmission against a frame the parser has
 // just completed.  Called for every frame that ends while an echo is
 // outstanding; returns false when the frame is collision wreckage and must be
@@ -337,13 +347,7 @@ bool GEAComponent::gea2_bus_clear_() const {
 // overlapping transmissions look like once the parser reaches an ETX — a
 // collision (gea2_collision_).
 bool GEAComponent::settle_gea2_echo_(const std::vector<uint8_t> &pkt) {
-  bool intact = false;
-  if (pkt.size() >= 6) {
-    size_t crc_offset = pkt.size() - 2;
-    uint16_t rx_crc = ((uint16_t)pkt[crc_offset] << 8) | (uint16_t)pkt[crc_offset + 1];
-    intact = rx_crc == crc16_(pkt.data(), crc_offset);
-  }
-  if (intact) {
+  if (frame_crc_ok_(pkt)) {
     if (pkt[2] == src_addr_) {
       ESP_LOGV(TAG, "GEA2 TX echo verified (%zu bytes)", pkt.size());
       gea2_echo_pending_ = false;
@@ -435,8 +439,15 @@ void GEAComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "GEA Component:");
   ESP_LOGCONFIG(TAG, "  Protocol: %s", protocol_ == Protocol::GEA2 ? "GEA2" : "GEA3");
   if (gea2_addr_discovery_) {
-    ESP_LOGCONFIG(TAG, "  Dest address: discovering on the bus%s",
-                  addr_discovery_halted_ ? " (halted — set dest_address)" : "…");
+    ESP_LOGCONFIG(TAG, "  Dest address: discovering on the bus…");
+    if (!addr_nodes_.empty()) {
+      ESP_LOGCONFIG(TAG, "  Nodes heard so far (set dest_address to the control board):");
+      char line[96];
+      for (const auto &node : addr_nodes_) {
+        describe_addr_node_(node, line, sizeof(line));
+        ESP_LOGCONFIG(TAG, "%s", line);
+      }
+    }
   } else if (auto_detect_) {
     ESP_LOGCONFIG(TAG, "  Dest address: auto-detect (current: 0x%02X)", dest_addr_);
   } else {
@@ -581,8 +592,15 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
 // wire this to api: on_client_connected to see it on demand.
 void GEAComponent::log_address() const {
   if (gea2_addr_discovery_) {
-    ESP_LOGI(TAG, "Appliance address: unresolved — %s",
-             addr_discovery_halted_ ? "discovery halted, set dest_address manually" : "discovering on the bus");
+    ESP_LOGI(TAG, "Appliance address: unresolved — discovering on the bus");
+    if (!addr_nodes_.empty()) {
+      ESP_LOGI(TAG, "  Nodes heard so far (set dest_address to the control board):");
+      char line[96];
+      for (const auto &node : addr_nodes_) {
+        describe_addr_node_(node, line, sizeof(line));
+        ESP_LOGI(TAG, "%s", line);
+      }
+    }
   } else if (dest_configured_) {
     ESP_LOGI(TAG, "Appliance address: 0x%02X (configured)", dest_addr_);
   } else if (auto_detect_) {
@@ -971,9 +989,8 @@ void GEAComponent::poll_next_() {
 // GEAComponent — GEA2 active address discovery
 // =============================================================================
 
-// Broadcast a GEA2 read of the appliance-type ERD. Whichever node answers
-// reveals its address in the SRC field of its response (captured in
-// process_packet_ via record_addr_candidate_).
+// Broadcast a GEA2 read of the appliance-type ERD.  Replies are classified in
+// note_addr_node_(), called from process_packet_().
 void GEAComponent::send_gea2_addr_probe_() {
   std::vector<uint8_t> payload = {CMD_GEA2_READ, 0x01, (uint8_t)(GEA2_ADDR_PROBE_ERD >> 8),
                                   (uint8_t)(GEA2_ADDR_PROBE_ERD & 0xFF)};
@@ -981,23 +998,141 @@ void GEAComponent::send_gea2_addr_probe_() {
   ESP_LOGD(TAG, "GEA2 address probe: broadcast read of ERD 0x%04X", GEA2_ADDR_PROBE_ERD);
 }
 
-// Record a distinct responder address seen during the current probe window.
-void GEAComponent::record_addr_candidate_(uint8_t src) {
-  for (uint8_t a : addr_candidates_) {
-    if (a == src)
-      return;
+// Record what a CRC-valid frame from another node says about that node, while
+// the appliance address is still unknown.  pkt is at least 6 bytes long.
+//
+// Read requests and read responses share command 0xF0, so a reply to the probe
+// is recognised by its shape, not by the command alone.  It is addressed to us
+// (a request for the same ERD from another node is not, or is 9 bytes long) and
+// is one of:
+//   full response   [0xF0][count=1][erd_h][erd_l][size][data...]   10 + size bytes
+//   empty response  [0xF0][count=0]                                7 bytes
+// The empty response is what a board that serves ERDs returns for one it does
+// not have.  Everything else, including frames between other nodes, only shows
+// that the node exists.  The hub sends nothing but probes during discovery, so
+// a read response addressed to us can only be a reply to one.
+void GEAComponent::note_addr_node_(const std::vector<uint8_t> &pkt) {
+  uint8_t dest = pkt[0];
+  uint8_t src = pkt[2];
+  uint8_t cmd = pkt[3];
+  if (src == GEA_BROADCAST_ADDR)
+    return;
+
+  AddrEvidence evidence = AddrEvidence::SEEN;
+  uint8_t appliance_type = 0;
+  if (dest == src_addr_ && cmd == CMD_GEA2_READ) {
+    if (pkt.size() == 7 && pkt[4] == 0) {
+      evidence = AddrEvidence::REFUSED;
+    } else if (pkt.size() >= 11 && pkt[4] == 1 && pkt.size() == (size_t)(10 + pkt[7]) &&
+               ((uint16_t)pkt[5] << 8 | pkt[6]) == GEA2_ADDR_PROBE_ERD) {
+      evidence = AddrEvidence::ANSWERED;
+      appliance_type = pkt[8];
+    }
   }
-  addr_candidates_.push_back(src);
-  ESP_LOGD(TAG, "GEA2 address probe: response from 0x%02X", src);
+
+  AddrNode *node = nullptr;
+  for (auto &n : addr_nodes_) {
+    if (n.addr == src) {
+      node = &n;
+      break;
+    }
+  }
+  if (node == nullptr && addr_nodes_.size() >= GEA2_ADDR_MAX_NODES && evidence != AddrEvidence::SEEN) {
+    // Table full: a reply to the probe must not be lost, since adoption counts
+    // them.  Give it the slot of a node known only from unrelated traffic.
+    for (auto &n : addr_nodes_) {
+      if (n.evidence == AddrEvidence::SEEN) {
+        n = {src, AddrEvidence::SEEN, 0, 0, 0, false};
+        node = &n;
+        break;
+      }
+    }
+  }
+  if (node == nullptr) {
+    if (addr_nodes_.size() >= GEA2_ADDR_MAX_NODES)
+      return;
+    addr_nodes_.push_back({src, AddrEvidence::SEEN, 0, 0, 0, false});
+    node = &addr_nodes_.back();
+    addr_report_pending_ = true;
+    ESP_LOGD(TAG, "GEA2 address discovery: node 0x%02X heard on the bus", src);
+  }
+
+  if (evidence == AddrEvidence::SEEN) {
+    node->last_cmd = cmd;
+    node->last_dest = dest;
+    node->has_traffic = true;
+    return;
+  }
+  if (evidence > node->evidence) {
+    node->evidence = evidence;
+    node->appliance_type = appliance_type;
+    addr_report_pending_ = true;
+    if (evidence == AddrEvidence::ANSWERED) {
+      ESP_LOGD(TAG, "GEA2 address probe: 0x%02X answered (appliance type 0x%02X)", src, appliance_type);
+    } else {
+      ESP_LOGD(TAG, "GEA2 address probe: 0x%02X returned an empty read response", src);
+    }
+  }
+}
+
+// One report line for a node heard during discovery.
+void GEAComponent::describe_addr_node_(const AddrNode &node, char *buf, size_t len) {
+  switch (node.evidence) {
+    case AddrEvidence::ANSWERED:
+      snprintf(buf, len, "    0x%02X — answered the probe (appliance type 0x%02X)", node.addr, node.appliance_type);
+      break;
+    case AddrEvidence::REFUSED:
+      snprintf(buf, len, "    0x%02X — replied to the probe, but has no ERD 0x%04X", node.addr, GEA2_ADDR_PROBE_ERD);
+      break;
+    case AddrEvidence::SEEN:
+      if (node.has_traffic) {
+        snprintf(buf, len, "    0x%02X — did not reply to the probe (last frame: cmd 0x%02X to 0x%02X)", node.addr,
+                 node.last_cmd, node.last_dest);
+      } else {
+        snprintf(buf, len, "    0x%02X — did not reply to the probe", node.addr);
+      }
+      break;
+  }
+}
+
+// Discovery could not pick an address: say what each node did, so the user can.
+void GEAComponent::report_addr_nodes_() {
+  unsigned answered = 0, refused = 0;
+  uint8_t refuser = 0;
+  for (const auto &node : addr_nodes_) {
+    if (node.evidence == AddrEvidence::ANSWERED) {
+      answered++;
+    } else if (node.evidence == AddrEvidence::REFUSED) {
+      refused++;
+      refuser = node.addr;
+    }
+  }
+
+  if (answered > 1) {
+    ESP_LOGW(TAG, "GEA2 address discovery: %u nodes answered the probe (ERD 0x%04X), not picking one. Nodes heard:",
+             answered, GEA2_ADDR_PROBE_ERD);
+  } else {
+    ESP_LOGW(TAG, "GEA2 address discovery: no node answered the probe (ERD 0x%04X) after %u attempt(s). Nodes heard:",
+             GEA2_ADDR_PROBE_ERD, (unsigned)addr_probe_attempts_);
+  }
+  char line[96];
+  for (const auto &node : addr_nodes_) {
+    describe_addr_node_(node, line, sizeof(line));
+    ESP_LOGW(TAG, "%s", line);
+  }
+  if (answered == 0 && refused == 1) {
+    ESP_LOGW(TAG, "  If 0x%02X is the control board, set 'dest_address: 0x%02X' and reflash. Still probing.", refuser,
+             refuser);
+  } else {
+    ESP_LOGW(TAG, "  Set 'dest_address' to the control board's address and reflash. Still probing.");
+  }
 }
 
 // Drive the probe/collect/evaluate cycle. Called from loop() while
-// gea2_addr_discovery_ is set; returns the component to normal operation once a
-// single appliance is found, or halts on an ambiguous (multi-responder) bus.
+// gea2_addr_discovery_ is set; returns the component to normal operation once
+// exactly one node has answered the probe.  Until then it keeps probing and
+// reports the nodes it has heard whenever that picture changes.
 void GEAComponent::drive_gea2_addr_discovery_() {
-  if (addr_discovery_halted_)
-    return;  // ambiguous result — idle until the user sets dest_address and reflashes
-
   uint32_t now = millis();
 
   if (!addr_probe_inflight_) {
@@ -1006,14 +1141,13 @@ void GEAComponent::drive_gea2_addr_discovery_() {
       return;
     if (!gea2_bus_clear_())
       return;  // yield to ongoing traffic; probe on a later pass
-    addr_candidates_.clear();
     send_gea2_addr_probe_();
     addr_probe_inflight_ = true;
     addr_probe_at_ms_ = now;
     return;
   }
 
-  // Probe is out — keep collecting responders until the window closes.
+  // Probe is out — keep collecting replies until the window closes.
   if (now - addr_probe_at_ms_ < GEA2_ADDR_PROBE_WINDOW_MS)
     return;
 
@@ -1021,35 +1155,51 @@ void GEAComponent::drive_gea2_addr_discovery_() {
   addr_probe_at_ms_ = now;  // start the cooldown before the next round
   addr_probe_attempts_++;
 
-  if (addr_candidates_.size() == 1) {
-    dest_addr_ = addr_candidates_[0];
+  // Evidence accumulates over the whole discovery phase, not per round: a node
+  // that answered once stays a candidate, so two nodes answering in different
+  // rounds are still two.
+  unsigned answered = 0;
+  const AddrNode *appliance = nullptr;
+  for (const auto &node : addr_nodes_) {
+    if (node.evidence == AddrEvidence::ANSWERED) {
+      answered++;
+      appliance = &node;
+    }
+  }
+
+  if (answered == 1) {
+    dest_addr_ = appliance->addr;
     gea2_addr_discovery_ = false;
-    ESP_LOGI(TAG, "GEA2 address discovery: appliance found at 0x%02X (after %u probe(s))", dest_addr_,
-             (unsigned)addr_probe_attempts_);
+    ESP_LOGI(TAG, "GEA2 address discovery: appliance found at 0x%02X (appliance type 0x%02X, after %u probe(s))",
+             dest_addr_, appliance->appliance_type, (unsigned)addr_probe_attempts_);
     ESP_LOGI(TAG, "  Pin it with 'dest_address: 0x%02X' in YAML to skip discovery on future boots.", dest_addr_);
+    if (addr_nodes_.size() > 1) {
+      ESP_LOGI(TAG, "  Other nodes heard on the bus:");
+      char line[96];
+      for (const auto &node : addr_nodes_) {
+        if (&node == appliance)
+          continue;
+        describe_addr_node_(node, line, sizeof(line));
+        ESP_LOGI(TAG, "%s", line);
+      }
+    }
+    addr_nodes_.clear();
+    addr_nodes_.shrink_to_fit();
 #ifdef GEA_GEA2_DISCOVERY
     if (gea2_discovery_)
       discovery_init_();
 #endif
-  } else if (addr_candidates_.empty()) {
-    bool loud = addr_probe_attempts_ <= GEA2_ADDR_PROBE_LOUD_ATTEMPTS || (addr_probe_attempts_ % 30 == 0);
+  } else if (addr_nodes_.empty()) {
+    bool loud =
+        addr_probe_attempts_ <= GEA2_ADDR_PROBE_LOUD_ATTEMPTS || (addr_probe_attempts_ % GEA2_ADDR_REPORT_EVERY == 0);
     if (loud)
       ESP_LOGW(TAG,
-               "GEA2 address discovery: no appliance answered the broadcast probe (attempt %u). Retrying… "
+               "GEA2 address discovery: nothing heard on the bus (attempt %u). Retrying… "
                "If this persists, check power/wiring or set 'dest_address' manually.",
                (unsigned)addr_probe_attempts_);
-  } else {
-    std::string list;
-    char buf[8];
-    for (uint8_t a : addr_candidates_) {
-      snprintf(buf, sizeof(buf), "0x%02X ", a);
-      list += buf;
-    }
-    ESP_LOGE(TAG,
-             "GEA2 address discovery: %zu nodes answered (%s)— ambiguous on a multi-node bus. "
-             "Set 'dest_address' to the one you want and reflash.",
-             addr_candidates_.size(), list.c_str());
-    addr_discovery_halted_ = true;
+  } else if (addr_report_pending_ || addr_probe_attempts_ % GEA2_ADDR_REPORT_EVERY == 0) {
+    addr_report_pending_ = false;
+    report_addr_nodes_();
   }
 }
 
@@ -1153,7 +1303,11 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
 
   // Filter packets not addressed to us (or broadcast).
   if (dest != src_addr_ && dest != GEA_BROADCAST_ADDR) {
-    ESP_LOGD(TAG, "Ignoring packet for 0x%02X (we are 0x%02X)", dest, src_addr_);
+    ESP_LOGD(TAG, "Ignoring packet from 0x%02X for 0x%02X (we are 0x%02X)", src, dest, src_addr_);
+    // Not for us, but while the appliance address is unknown it still shows
+    // which nodes are on the bus.
+    if (gea2_addr_discovery_ && frame_crc_ok_(pkt))
+      note_addr_node_(pkt);
     return;
   }
 
@@ -1176,20 +1330,10 @@ void GEAComponent::process_packet_(const std::vector<uint8_t> &pkt) {
   send_ack_();
   last_rx_ms_ = millis();
 
-  // GEA2 active address discovery: only a genuine read response to our
-  // appliance-type probe (ERD 0x0008) identifies the main control board.
-  // Recording the SRC of *any* valid frame would also pick up unrelated
-  // inter-board traffic that a multi-node bus (dishwashers, heat-pump water
-  // heaters) carries during the collection window, making the bus look
-  // ambiguous and stalling discovery. Match the probe response explicitly: it
-  // arrives as CMD_GEA2_READ (0xF0) carrying our probe ERD in bytes 5..6. The
-  // self-echo of our own request is already dropped above, so src is a real
-  // responder. drive_gea2_addr_discovery_() evaluates the collected set.
-  if (gea2_addr_discovery_ && pkt.size() >= 7 && pkt[3] == CMD_GEA2_READ) {
-    uint16_t probed_erd = (uint16_t)pkt[5] << 8 | pkt[6];
-    if (probed_erd == GEA2_ADDR_PROBE_ERD)
-      record_addr_candidate_(src);
-  }
+  // GEA2 active address discovery: note who sent this frame and whether it is
+  // a reply to our probe.  drive_gea2_addr_discovery_() evaluates the result.
+  if (gea2_addr_discovery_)
+    note_addr_node_(pkt);
 
   // Auto-detect: lock onto the source address of the first valid packet.
   if (auto_detect_ && src != GEA_BROADCAST_ADDR && src != src_addr_) {

@@ -242,8 +242,9 @@ class GEAComponent : public uart::UARTDevice, public Component {
   //         snprintf(buf, sizeof(buf), "0x%02X", id(gea_hub).get_dest_address());
   //         return std::string(buf);
   uint8_t get_dest_address() const { return dest_addr_; }
-  // False while GEA2 address discovery is still probing or has halted on an
-  // ambiguous bus; true once an address is known (discovered or configured).
+  // False while GEA2 address discovery is still probing (including when it has
+  // reported nodes but could not pick one); true once an address is known
+  // (discovered or configured).
   bool is_address_resolved() const { return !gea2_addr_discovery_; }
 
   // ---- Diagnostics — callable from YAML lambdas ---------------------------
@@ -443,31 +444,56 @@ class GEAComponent : public uart::UARTDevice, public Component {
   uint32_t gea2_busy_ms_{0};
 
   // GEA2 active address discovery — engaged when dest_address is omitted in YAML.
-  // We broadcast a read of the appliance-type ERD; the appliance reveals its
-  // address in the SRC field of its response. We probe appliance type (0x0008)
-  // rather than model number (0x0001) because only the main control board is
-  // expected to answer it — model number is present on auxiliary boards (UI,
-  // Wi-Fi module) too, which makes a multi-node bus look ambiguous and stalls
-  // discovery. We only count a node as a responder when it actually returns a
-  // read response for this ERD (see process_packet_), not on any bus traffic
-  // seen during the window — otherwise inter-board chatter on a multi-node bus
-  // would masquerade as extra responders. If more than one node still answers,
-  // we collect distinct responders over a short window and only auto-adopt when
-  // exactly one replies (otherwise halt and ask the user).
-  static constexpr uint16_t GEA2_ADDR_PROBE_ERD = 0x0008;        // appliance type — only the main board answers
-  static constexpr uint32_t GEA2_ADDR_PROBE_WINDOW_MS = 500;     // collect responders this long after each probe
+  //
+  // GEA2 has no spontaneous traffic addressed to us, so the hub broadcasts a
+  // read of the appliance-type ERD and looks at who replies.  The same ERD is
+  // used by the GEA2 fork of GE's home-assistant-adapter for this purpose; the
+  // model number (0x0001) was tried first, but auxiliary boards serve it too.
+  //
+  // Every node heard during discovery is kept in a small table together with
+  // the strongest evidence seen from it (AddrEvidence).  The address is adopted
+  // only in the one case that needs no guessing: exactly one node returned a
+  // full read response to the probe.  Anything else — several answers, a node
+  // that serves ERDs but not this one, or only unrelated traffic — is reported
+  // in the log with what each node did, and probing continues.  A wrong
+  // adoption would leave every entity empty with nothing to explain why, so
+  // the choice is left to the user (dest_address) whenever it is one.
+  static constexpr uint16_t GEA2_ADDR_PROBE_ERD = 0x0008;        // appliance type
+  static constexpr uint32_t GEA2_ADDR_PROBE_WINDOW_MS = 500;     // wait this long for replies to each probe
   static constexpr uint32_t GEA2_ADDR_PROBE_COOLDOWN_MS = 1000;  // idle gap between probe rounds
   static constexpr uint8_t GEA2_ADDR_PROBE_LOUD_ATTEMPTS = 5;    // throttle the "no response" warning after this many
-  bool dest_configured_{false};                                  // set_dest_address() was called from YAML
-  bool gea2_addr_discovery_{false};                              // actively probing the bus for the appliance address
-  bool addr_discovery_halted_{false};  // multiple responders — waiting for a manual dest_address
-  bool addr_probe_inflight_{false};    // a probe is out; collecting responders this round
-  uint32_t addr_probe_at_ms_{0};       // start of the current probe window / cooldown
+  static constexpr uint8_t GEA2_ADDR_REPORT_EVERY = 30;          // repeat an unchanged report every N rounds
+  static constexpr size_t GEA2_ADDR_MAX_NODES = 8;               // table size; a GEA2 bus carries a handful of boards
+
+  // What a node did during discovery, weakest to strongest.  Only ANSWERED
+  // qualifies a node for automatic adoption.
+  enum class AddrEvidence : uint8_t {
+    SEEN,      // valid frames from it, none of them a reply to the probe
+    REFUSED,   // replied to the probe with an empty read response: it serves ERDs, but not this one
+    ANSWERED,  // replied to the probe with the ERD's value
+  };
+  struct AddrNode {
+    uint8_t addr;
+    AddrEvidence evidence;
+    uint8_t appliance_type;  // first value byte of the probe response; valid when evidence == ANSWERED
+    uint8_t last_cmd;        // command and destination of the last frame that was not a probe reply,
+    uint8_t last_dest;       // shown in the report; valid when has_traffic
+    bool has_traffic;
+  };
+
+  bool dest_configured_{false};      // set_dest_address() was called from YAML
+  bool gea2_addr_discovery_{false};  // actively probing the bus for the appliance address
+  bool addr_probe_inflight_{false};  // a probe is out; waiting for its replies
+  bool addr_report_pending_{false};  // the node table changed since it was last reported
+  uint32_t addr_probe_at_ms_{0};     // start of the current probe window / cooldown
   uint32_t addr_probe_attempts_{0};
-  std::vector<uint8_t> addr_candidates_;  // distinct responder SRC addresses seen this round
+  std::vector<AddrNode> addr_nodes_;  // nodes heard during discovery; released once an address is adopted
   void drive_gea2_addr_discovery_();
   void send_gea2_addr_probe_();
-  void record_addr_candidate_(uint8_t src);
+  void note_addr_node_(const std::vector<uint8_t> &pkt);
+  void report_addr_nodes_();
+  static void describe_addr_node_(const AddrNode &node, char *buf, size_t len);
+  static bool frame_crc_ok_(const std::vector<uint8_t> &pkt);
 
   // GEA2 ERD discovery (opt-in via gea2_discovery: true in YAML).
   // On first boot: scans GEA2_DISCOVERY_TABLE, saves responsive ERDs to NVS.
