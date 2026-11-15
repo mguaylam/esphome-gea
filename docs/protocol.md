@@ -281,9 +281,10 @@ node's address).
   the ~16 ms default loop interval. The request is released as soon as the
   bus goes quiet, so idle polling costs nothing.
 - **Wiring diagnostics** — an echo that has not come back as a frame within
-  100 ms is counted, and the count is reported with a WARNING alongside the
-  periodic RX stats (TX not reaching the bus, or RX not hearing it) instead
-  of looking like an ordinary response timeout.
+  100 ms, with no unfinished frame dropped in the meantime, is counted, and
+  the count is reported with a WARNING alongside the periodic RX stats (TX
+  not reaching the bus, or RX not hearing it) instead of looking like an
+  ordinary response timeout.
 
 **What it still doesn't do, and why:**
 
@@ -299,7 +300,13 @@ node's address).
 - **A collision that leaves no frame end is caught late.** If the overlap
   destroys the ETX, the parser has no frame to judge until it gives the
   truncated one up after 50 ms of silence; the fast retry starts from there
-  rather than from the end of the frame.
+  rather than from the end of the frame. If another node's frame arrives
+  inside those 50 ms, the parser restarts on its STX instead and the
+  unfinished frame is dropped without a verdict — the restart could just as
+  well be our own STX landing on someone else's frame, with our echo about to
+  follow intact. That case is settled when the 100 ms echo window expires: an
+  unfinished frame dropped in the window and no intact echo since is a
+  collision, and the fast retry starts from there.
 - **A small race window remains.** The bus-clear check runs in `loop()`, so
   another node can still start transmitting between the check and the
   write. The high-frequency loop shrinks that window to roughly millisecond

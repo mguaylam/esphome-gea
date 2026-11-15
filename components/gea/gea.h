@@ -352,7 +352,9 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // collision if a damaged frame turns up instead (settle_gea2_echo_), or if
   // a frame is cut short and discarded (RX_FRAME_TIMEOUT_MS, which is shorter
   // than this window for that reason).  If none of that happens within this
-  // window, assume it never will (TX open / RX mute) and unwedge.
+  // window, assume it never will and unwedge: a collision if the parser
+  // abandoned an unfinished frame meanwhile (gea2_echo_frame_abandoned_),
+  // otherwise a missing echo (TX open / RX mute).
   static constexpr uint32_t GEA2_ECHO_TIMEOUT_MS = 100;
   // A frame that starts (STX) but never terminates (ETX) must not hold the
   // parser out of IDLE indefinitely: that wedges gea2_bus_clear_() and
@@ -373,7 +375,11 @@ class GEAComponent : public uart::UARTDevice, public Component {
   static constexpr uint32_t GEA2_COLLISION_BACKOFF_MIN_MS = 2;
   static constexpr uint32_t GEA2_COLLISION_BACKOFF_SPAN_MS = 18;
   bool gea2_echo_pending_{false};  // a transmitted frame has not come back yet
-  uint32_t gea2_echo_at_ms_{0};    // when that frame was written (for the timeout)
+  // The parser dropped an unfinished frame (restart on STX, or overflow) while
+  // the echo was outstanding.  Not a verdict by itself — our echo may still
+  // follow intact — so it is only read when the echo window expires.
+  bool gea2_echo_frame_abandoned_{false};
+  uint32_t gea2_echo_at_ms_{0};  // when that frame was written (for the timeout)
   // Echo bookkeeping since boot, for the wiring report in the periodic stats:
   // frames written to the wire, how many never came back, and how many of
   // those have already been reported.

@@ -221,6 +221,7 @@ void GEAComponent::send_packet_(uint8_t dest, const std::vector<uint8_t> &payloa
     // own.  The parser decodes it like any other frame and process_packet_()
     // settles it when it arrives (see settle_gea2_echo_).
     gea2_echo_pending_ = true;
+    gea2_echo_frame_abandoned_ = false;
     gea2_echo_at_ms_ = millis();
     gea2_tx_frames_++;
   }
@@ -650,14 +651,23 @@ void GEAComponent::loop() {
     process_rx_byte_(byte);
   }
 
-  // An echo that was neither verified nor found damaged means our frame never
-  // came back as a frame at all: TX did not reach the wire, RX does not hear
-  // it, or it was garbled beyond an ETX.  Count it (reported with the stats
-  // below) and don't let it wedge the bus-clear gate forever.
+  // An echo that was neither verified nor found damaged within the window
+  // never came back as a frame at all.  Either way, don't let it wedge the
+  // bus-clear gate forever.
   if (gea2_echo_pending_ && millis() - gea2_echo_at_ms_ >= GEA2_ECHO_TIMEOUT_MS) {
-    gea2_echo_pending_ = false;
-    gea2_echo_missing_++;
-    ESP_LOGD(TAG, "GEA2 TX echo not seen within %u ms", (unsigned)GEA2_ECHO_TIMEOUT_MS);
+    if (gea2_echo_frame_abandoned_) {
+      // The parser dropped an unfinished frame in that window and our echo
+      // never followed it intact: the unfinished frame was ours, cut short by
+      // an overlap, and another node's traffic restarted the parser before
+      // the truncated-frame timeout could see it.
+      gea2_collision_("abandoned frame");
+    } else {
+      // Nothing resembling our frame came back: TX did not reach the wire or
+      // RX does not hear it.  Count it (reported with the stats below).
+      gea2_echo_pending_ = false;
+      gea2_echo_missing_++;
+      ESP_LOGD(TAG, "GEA2 TX echo not seen within %u ms", (unsigned)GEA2_ECHO_TIMEOUT_MS);
+    }
   }
 
   // A frame that started but never terminated must not hold the parser out of
@@ -1064,7 +1074,12 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
 
     case RxState::IN_PACKET:
       if (byte == GEA_STX) {
-        // Unexpected re-sync: restart frame.
+        // Unexpected re-sync: restart frame.  While our echo is outstanding
+        // the frame dropped here may be that echo, cut short — or the restart
+        // may be our own STX landing on another node's frame, with our echo
+        // about to follow intact.  Remember it; the echo timeout decides.
+        if (gea2_echo_pending_)
+          gea2_echo_frame_abandoned_ = true;
         rx_buf_.clear();
       } else if (byte == GEA_ETX) {
         // End of frame — validate and dispatch.
@@ -1076,6 +1091,8 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
         // desynchronised.  Drop it rather than growing the buffer without bound.
         // Checked before ESC so the escaped byte cannot push past the ceiling.
         ESP_LOGW(TAG, "RX: frame exceeded %zu bytes without ETX — resynchronising", RX_FRAME_MAX_BYTES);
+        if (gea2_echo_pending_)
+          gea2_echo_frame_abandoned_ = true;
         rx_buf_.clear();
         rx_state_ = RxState::IDLE;
       } else if (byte == GEA_ESC) {
