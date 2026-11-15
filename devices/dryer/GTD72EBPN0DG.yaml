@@ -1,376 +1,306 @@
-#Configureation for GTD72EBPN0DG dryer with mulcmu pcb version 2.x
-#GEA2 bus
-
-substitutions:
-  name: dryer
-  upper_name: Dryer
-
+# ESPHome config for a GE electric dryer via GEA2 — read-only
+# Appliance: GE GTD72EBPN0DG (standard electric dryer)
+# Hardware: mulcmu/esphome-ge-laundry-uart PCB v2.x (ESP32-C3). The board's line driver inverts the serial
+#   signals, hence `inverted: true` on both UART pins.
+# Framework: ESP-IDF
+# Baud rate: 19200 (GEA2)
+# TX = GPIO5, RX = GPIO10
+#
+# Findings worth not rediscovering:
+# - The control board answers at bus address 0x24, like the GE GFD48GSSK0WW dryer (GFD48GSSK0WW.yaml).
+# - Option labels are GE's names from erd-definitions/appliance_api_erd_definitions.json. 0x200A is shared with
+#   washers; only the dryer cycles are listed. Unknown values are published as 0xNN.
+# - 0x2038 (Remote Set Delay Start Minutes) answers but is deliberately not exposed as writable.
+# - GEA2 discovery: 48 ERDs responded out of 2445 scanned. The list is at the end of this file.
 esphome:
-  name: ${name}
+  name: ge-dryer
+  friendly_name: GE Dryer
+  comment: GE GTD72EBPN0DG via the mulcmu GE laundry UART board
   platformio_options:
     board_build.flash_mode: dio
-  on_boot:
-    - priority: 800
-      then:
-        - light.turn_off: led1
   project:
     name: GE.GTD72EBPN0DG
     version: "1.0.0"
 
 esp32:
   board: esp32-c3-devkitc-02
-  variant: esp32c3
   framework:
-    type: esp-idf  
-
-logger:
-  baud_rate: 0 
-
-api:
-
-ota:
-  password: !secret esp_home_ota_pw
-  platform: esphome
+    type: esp-idf
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  
-time:
-  - platform: homeassistant
-    id: homeassistant_time
+  min_auth_mode: WPA2
+  ap:
+    ssid: "ge-dryer fallback"
+    password: !secret ap_password
+  on_connect:
+    - light.turn_on: led_green
+  on_disconnect:
+    - light.turn_off: led_green
+
+captive_portal:
+
+logger:
+  baud_rate: 0
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [gea]
 
 uart:
   id: uart_gea
-  tx_pin: 
+  tx_pin:
     number: GPIO5
     inverted: true
-  rx_pin: 
+  rx_pin:
     number: GPIO10
     inverted: true
   baud_rate: 19200
 
-external_components:
-  - source: github://mguaylam/esphome-gea
-    components: [gea]
-
 gea:
   id: gea_hub
   uart_id: uart_gea
-  protocol: gea2  
-  src_address: 0xBB
-  dest_address: 0x24
-  erd_lookup: true
+  protocol: gea2
+  dest_address: 0x24        # this dryer's control board (NOT GE's usual 0xC0). Pinned so boot never probes.
+  erd_lookup: true          # boot log names every ERD it sees
 
-sensor:
-  - platform: gea
-    gea_id: gea_hub
-    name: ${upper_name} Time Remaining
-    unit_of_measurement: min
-    multiplier: 0.0166666
-    accuracy_decimals: 0
-    icon: mdi:progress-clock
-    erd: 0x2007
-    
-  - platform: gea
-    gea_id: gea_hub
-    name: ${upper_name} Delayed Start
-    unit_of_measurement: min
-    accuracy_decimals: 0
-    icon: mdi:progress-clock
-    erd: 0x2010        
-
-  - platform: uptime
-    name: ${upper_name} Uptime
-    entity_category: "diagnostic"
-
-  - platform: wifi_signal
-    name: ${upper_name} WiFi Signal
-    update_interval: 60s
-    entity_category: "diagnostic"    
-
-  - platform: template
-    name: "GEA RX Bytes"
-    entity_category: diagnostic
-    accuracy_decimals: 0
-    lambda: 'return id(gea_hub).get_rx_bytes();'
-    update_interval: 30s
-
-  - platform: template
-    name: "GEA CRC Errors"
-    entity_category: diagnostic
-    accuracy_decimals: 0
-    lambda: 'return id(gea_hub).get_crc_errors();'
-    update_interval: 30s
-
-  - platform: template
-    name: "GEA TX Retries"
-    entity_category: diagnostic
-    accuracy_decimals: 0
-    lambda: 'return id(gea_hub).get_tx_retries();'
-    update_interval: 30s
-
-  - platform: template
-    name: "GEA Dropped Requests"
-    entity_category: diagnostic
-    accuracy_decimals: 0
-    lambda: 'return id(gea_hub).get_dropped_requests();'
-    update_interval: 30s
-
-text_sensor:
-  - platform: gea
-    gea_id: gea_hub
-    name: ${upper_name} Model
-    entity_category: "diagnostic"
-    erd: 0x0001
-    decode: ascii
-
-  - platform: gea
-    gea_id: gea_hub
-    name: ${upper_name} State
-    icon: mdi:tumble-dryer
-    erd: 0x2000
-    decode: uint8
-    options:
-      0x00: "Off"
-      0x01: "Off"
-      0x02: "Running"
-      0x03: "Paused"
-      0x04: "Done"
-
-  - platform: gea
-    gea_id: gea_hub
-    name: ${upper_name} Substate
-    icon: mdi:tumble-dryer
-    erd: 0x2001
-    decode: uint8
-    options:
-      0x00: "N/A"
-      0x01: "Fill"
-      0x02: "Soak"
-      0x03: "Wash"
-      0x04: "Rinse"
-      0x05: "Spin"
-      0x06: "Drain"
-      0x07: "Extra Spin"
-      0x08: "Extra Rinse"
-      0x09: "Tumble"
-      0x0A: "Load Detection"
-      0x80: "Drying"
-      0x81: "Steam"
-      0x82: "Cool Down"
-      0x83: "Extended Tumble"
-      0x84: "Damp"
-      0x85: "Air Fluff"
-
-  - platform: gea
-    gea_id: gea_hub
-    name: ${upper_name} Cycle
-    icon: mdi:tumble-dryer
-    erd: 0x200A
-    decode: uint8
-    options:
-      0x89: "Mixed Load"
-      0x0D: "Delicates"
-      0x80: "Cottons"
-      0x0B: "Jeans"
-      0x8B: "Casuals"
-      0x88: "Quick Dry"
-      0x06: "Towels"
-      0x04: "Bulky"
-      0x05: "Sanitize"
-      0x85: "Air Fluff"
-      0x8C: "Warm Up"
-      0x83: "Timed Dry"
-      0x14: "Colors"
-      0x09: "Whites"
-      0x82: "Active Wear"
-      0x1D: "Quick Wash"
-      0x02: "Drain & Spin"
-      0x1A: "Deep Clean" 
-
-  - platform: gea
-    gea_id: gea_hub
-    name: ${upper_name} Dryness Setting
-    icon: mdi:water-circle
-    erd: 0x204D
-    decode: uint8
-    options:
-      0x00: "N/A"
-      0x01: "Damp"
-      0x02: "Less Dry"
-      0x03: "Dry"
-      0x04: "More Dry"
-
-  - platform: gea
-    gea_id: gea_hub
-    name: ${upper_name} Heat Setting
-    erd: 0x2050
-    decode: uint8
-    options:
-      0x00: "Air Fluff"
-      0x03: "Low"
-      0x04: "Medium"
-      0x05: "High"
-  
-  - platform: wifi_info
-    ip_address:
-      name: ${upper_name} IP
-      entity_category: "diagnostic"
-
-binary_sensor:
-  - platform: gea
-    gea_id: gea_hub
-    name: ${upper_name} Door
-    erd: 0x2012
-
-  - platform: gea
-    name: ${upper_name} Cycle Complete
-    icon: mdi:tumble-dryer
-    erd: 0x2002
-
-  - platform: template
-    name: "GEA Bus Connected"
-    entity_category: "diagnostic"
-    lambda: 'return id(gea_hub).is_bus_connected();'
-       
-button:
-  - platform: restart
-    name: ${upper_name} Restart
-
+# Board LEDs, dimmed with max_power: red GPIO2 (active low, unused), green GPIO3 (WiFi), yellow GPIO4 (GEA bus).
 output:
-  # GPIO2: Output for Red LED, active low
   - platform: ledc
     pin:
-      number: 2
+      number: GPIO2
       inverted: true
       ignore_strapping_warning: true
-    id: led1_output
+    id: led_red_output
     max_power: 0.03
-
-  # GPIO3: Output for Green LED, active high
   - platform: ledc
+    pin: GPIO3
+    id: led_green_output
     max_power: 0.03
-    pin: 
-      number: 3
-      inverted: false
-    id: led2_output
-
-  # GPIO10: Output for Yellow LED, active high
   - platform: ledc
-    pin:
-      number: 4
-      inverted: false
-    id: led3_output
+    pin: GPIO4
+    id: led_yellow_output
     max_power: 0.06
 
 light:
   - platform: monochromatic
-    name: "Red LED"
-    output: led1_output
-    id: led1
+    name: Red LED
+    id: led_red
+    output: led_red_output
     restore_mode: ALWAYS_OFF
-
+    entity_category: config
   - platform: monochromatic
-    name: "Green LED"
-    output: led2_output
-    id: led2
+    name: Green LED
+    id: led_green
+    output: led_green_output
     restore_mode: ALWAYS_OFF
-
+    entity_category: config
   - platform: monochromatic
-    name: "Yellow LED"
-    output: led3_output
-    id: led3
+    name: Yellow LED
+    id: led_yellow
+    output: led_yellow_output
     restore_mode: ALWAYS_OFF
+    entity_category: config
 
-interval:
-  - interval: 1s
-    then:
-      - if:
-          condition:
-            wifi.connected:
-          then:
-            if:
-              condition:
-                light.is_off: led2
-              then:
-                - light.turn_on: led2
-          else:
-            if:
-              condition:
-                light.is_on: led2
-              then:
-                - light.turn_off: led2
-  - interval: 1s
-    then:
-      - if:
-          condition:
-            lambda: |-
-              return id(gea_hub).is_bus_connected();
-          then:
-            if:
-              condition:
-                light.is_off: led3
-              then:
-                - light.turn_on: led3
-          else:
-            if:
-              condition:
-                light.is_on: led3
-              then:
-                - light.turn_off: led3
+text_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: State
+    erd: 0x2000
+    decode: uint8
+    icon: mdi:tumble-dryer
+    options:
+      0x00: Idle
+      0x01: Standby
+      0x02: Running
+      0x03: Paused
+      0x04: End of Cycle
+      0x05: Delay Run
+      0x06: Delay Run
+      0x07: Delay Pause
+      0x09: Commissioning
+  - platform: gea
+    gea_id: gea_hub
+    name: Phase
+    erd: 0x2001
+    decode: uint8
+    icon: mdi:progress-clock
+    options:
+      0x00: Not Running
+      0x09: Tumble
+      0x80: Drying
+      0x81: Mist Steam
+      0x82: Cool Down
+      0x83: Extended Tumble
+      0x84: Damp
+      0x85: Air Fluff
+      0x86: Sensing
+      0x88: Wrinkle Free
+      0x89: Preparing
+      0x8A: Steaming
+      0x8B: Sanitizing
+      0x8D: Load Sensing
+  - platform: gea
+    gea_id: gea_hub
+    name: Cycle
+    erd: 0x200A
+    decode: uint8
+    icon: mdi:tumble-dryer
+    options:
+      0x00: Not Selected
+      0x04: Bulky Items
+      0x05: Sanitize
+      0x06: Towels or Sheets
+      0x0B: Jeans
+      0x0D: Delicates
+      0x80: Cottons
+      0x82: Active Wear
+      0x83: Timed Dry
+      0x85: Quick or Air Fluff
+      0x88: Speed Dry
+      0x89: Mixed
+      0x8B: Casuals
+      0x8C: Warm Up
+  - platform: gea
+    gea_id: gea_hub
+    name: Dryness
+    erd: 0x204D
+    decode: uint8
+    icon: mdi:water-percent
+    options:
+      0x00: Disabled
+      0x01: Damp
+      0x02: Less Dry
+      0x03: Dry
+      0x04: More Dry
+      0x05: Extra Dry
+  - platform: gea
+    gea_id: gea_hub
+    name: Heat
+    erd: 0x2050
+    decode: uint8
+    icon: mdi:thermometer
+    options:
+      0x00: Disabled
+      0x01: No Heat
+      0x02: Extra Low
+      0x03: Low
+      0x04: Medium
+      0x05: High
+  - platform: gea
+    gea_id: gea_hub
+    name: Model
+    erd: 0x0001
+    decode: ascii
+    entity_category: diagnostic
 
+sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: Remaining Time
+    erd: 0x2007
+    decode: uint16_be
+    multiplier: 0.0166667      # seconds -> minutes
+    accuracy_decimals: 0
+    unit_of_measurement: min
+    device_class: duration
+    state_class: measurement
+    icon: mdi:timer-outline
+  - platform: gea
+    gea_id: gea_hub
+    name: Delay Remaining
+    erd: 0x2010
+    decode: uint16_be
+    accuracy_decimals: 0
+    unit_of_measurement: min
+    device_class: duration
+    icon: mdi:timer-sand
+  - platform: uptime
+    name: Uptime
+    entity_category: diagnostic
+  - platform: wifi_signal
+    name: WiFi Signal
+    update_interval: 60s
+    entity_category: diagnostic
+  # Bus health (component accessors — docs/diagnostics.md).
+  - platform: template
+    name: Dropped Requests
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    state_class: total_increasing
+    update_interval: 60s
+    lambda: 'return id(gea_hub).get_dropped_requests();'
+  - platform: template
+    name: Bus Collisions
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    state_class: total_increasing
+    update_interval: 60s
+    lambda: 'return id(gea_hub).get_tx_collisions();'
 
+binary_sensor:
+  - platform: template
+    name: Bus Connected
+    entity_category: diagnostic
+    device_class: connectivity
+    lambda: 'return id(gea_hub).is_bus_connected();'
+    on_press:
+      - light.turn_on: led_yellow
+    on_release:
+      - light.turn_off: led_yellow
+  - platform: gea
+    gea_id: gea_hub
+    name: Door
+    erd: 0x2012
+    bitmask: 0x01           # 0x01 = closed
+    inverted: true          # door class: ON = open
+    device_class: door
+  - platform: gea
+    gea_id: gea_hub
+    name: Cycle Complete
+    erd: 0x2002
+    bitmask: 0x01
+    icon: mdi:check-circle-outline
 
+button:
+  - platform: restart
+    name: Restart
+    entity_category: diagnostic
 
-# [16:31:40.780][I][gea:1171]: GEA2 discovery complete — 48 ERDs responded out of 2445 scanned
-# [16:31:40.780][I][gea:1173]: Copy the ERDs below into your YAML to build your configuration:
-# [16:31:40.784][I][gea:1159]:   0x0001  # Model Number
-# [16:31:40.784][I][gea:1159]:   0x0002  # Serial Number
-# [16:31:40.784][I][gea:1159]:   0x0008  # Appliance Type
-# [16:31:40.784][I][gea:1159]:   0x0030  # Ready to Enter Boot Loader
-# [16:31:40.785][I][gea:1159]:   0x0032  # Reset Board
-# [16:31:40.785][I][gea:1159]:   0x0035  # Personality (32-bit)
-# [16:31:40.785][I][gea:1159]:   0x0036  # Service Mode State Request
-# [16:31:40.786][I][gea:1159]:   0x0037  # Service Mode State
-# [16:31:40.791][I][gea:1159]:   0x0038  # Supported Image Types
-# [16:31:40.791][I][gea:1159]:   0x0039  # Boot Loader Version
-# [16:31:40.793][I][gea:1159]:   0x003A  # Application Version
-# [16:31:40.793][I][gea:1159]:   0x003B  # Parametric Version
-# [16:31:40.795][I][gea:1159]:   0x003C  # Auxiliary Version
-# [16:31:40.796][I][gea:1159]:   0x2000  # Machine State
-# [16:31:40.796][I][gea:1159]:   0x2001  # Sub Cycle State
-# [16:31:40.796][I][gea:1159]:   0x2002  # Remote End Of Cycle State
-# [16:31:40.799][I][gea:1159]:   0x2007  # Remaining Cycle Time
-# [16:31:40.799][I][gea:1159]:   0x200A  # Laundry Current Selected Cycle
-# [16:31:40.799][I][gea:1159]:   0x200E  # Laundry Operating Mode
-# [16:31:40.799][I][gea:1159]:   0x2010  # Delay Time Remaining Minutes
-# [16:31:40.801][I][gea:1159]:   0x2012  # Lid Switch State
-# [16:31:40.801][I][gea:1159]:   0x201C  # Dryer Cycle Type
-# [16:31:40.801][I][gea:1159]:   0x201D  # End Of Cycle Alarm Notification
-# [16:31:40.803][I][gea:1159]:   0x2022  # Dryer Sheet Usage Configuration
-# [16:31:40.806][I][gea:1159]:   0x2023  # Dryer Sheets Remaining
-# [16:31:40.806][I][gea:1159]:   0x2038  # Remote Set Delay Start Minutes
-# [16:31:40.806][I][gea:1159]:   0x2039  # Remote Status
-# [16:31:40.806][I][gea:1159]:   0x2040  # Remote Stop Cycle Request
-# [16:31:40.809][I][gea:1159]:   0x2041  # Remote Start Extended Tumble
-# [16:31:40.809][I][gea:1159]:   0x2044  # EcoDry Option Request
-# [16:31:40.810][I][gea:1159]:   0x2045  # Eco Dry Option Allowables
-# [16:31:40.810][I][gea:1159]:   0x2046  # EcoDry Option Selection
-# [16:31:40.811][I][gea:1159]:   0x2047  # Damp Alert Status
-# [16:31:40.811][I][gea:1159]:   0x2048  # Damp Alert Option Request
-# [16:31:40.811][I][gea:1159]:   0x2049  # Damp Alert Option Allowables
-# [16:31:40.811][I][gea:1159]:   0x204A  # Damp Alert Option Selection
-# [16:31:40.814][I][gea:1159]:   0x204B  # Dryer Dryness Level Request
-# [16:31:40.814][I][gea:1159]:   0x204C  # Dryer Dryness Option Allowables
-# [16:31:40.815][I][gea:1159]:   0x204D  # Dryer Dryness Option Selection
-# [16:31:40.815][I][gea:1159]:   0x204E  # Dryer Temperature Level Request
-# [16:31:40.818][I][gea:1159]:   0x204F  # Dryer Temperature Option Allowables
-# [16:31:40.818][I][gea:1159]:   0x2050  # Dryer Temperature Option Selection
-# [16:31:40.818][I][gea:1159]:   0x2051  # Dryer Extended Tumble Option Request
-# [16:31:40.818][I][gea:1159]:   0x2052  # Dryer Extended Tumble Option Allowables
-# [16:31:40.820][I][gea:1159]:   0x2053  # Dryer Extended Tumble Option Selection
-# [16:31:40.820][I][gea:1159]:   0x205D  # Dryer Reduce Static Option Request
-# [16:31:40.820][I][gea:1159]:   0x205E  # Dryer Reduce Static Option Selection
-# [16:31:40.820][I][gea:1159]:   0x205F  # Dryer Reduce Static Option Allowables
-# [16:31:40.832][I][gea:682]: GEA2 poll list built: 8 unique ERDs
+# GEA2 discovery output (48 ERDs). ERD names are GE's.
+#   0x0001 Model Number                       0x2023 Dryer Sheets Remaining
+#   0x0002 Serial Number                      0x2038 Remote Set Delay Start Minutes
+#   0x0008 Appliance Type                     0x2039 Remote Status
+#   0x0030 Ready to Enter Boot Loader         0x2040 Remote Stop Cycle Request
+#   0x0032 Reset Board                        0x2041 Remote Start Extended Tumble
+#   0x0035 Personality (32-bit)               0x2044 EcoDry Option Request
+#   0x0036 Service Mode State Request         0x2045 Eco Dry Option Allowables
+#   0x0037 Service Mode State                 0x2046 EcoDry Option Selection
+#   0x0038 Supported Image Types              0x2047 Damp Alert Status
+#   0x0039 Boot Loader Version                0x2048 Damp Alert Option Request
+#   0x003A Application Version                0x2049 Damp Alert Option Allowables
+#   0x003B Parametric Version                 0x204A Damp Alert Option Selection
+#   0x003C Auxiliary Version                  0x204B Dryer Dryness Level Request
+#   0x2000 Machine State                      0x204C Dryer Dryness Option Allowables
+#   0x2001 Sub Cycle State                    0x204D Dryer Dryness Option Selection
+#   0x2002 Remote End Of Cycle State          0x204E Dryer Temperature Level Request
+#   0x2007 Remaining Cycle Time               0x204F Dryer Temperature Option Allowables
+#   0x200A Laundry Current Selected Cycle     0x2050 Dryer Temperature Option Selection
+#   0x200E Laundry Operating Mode             0x2051 Dryer Extended Tumble Option Request
+#   0x2010 Delay Time Remaining Minutes       0x2052 Dryer Extended Tumble Option Allowables
+#   0x2012 Lid Switch State                   0x2053 Dryer Extended Tumble Option Selection
+#   0x201C Dryer Cycle Type                   0x205D Dryer Reduce Static Option Request
+#   0x201D End Of Cycle Alarm Notification    0x205E Dryer Reduce Static Option Selection
+#   0x2022 Dryer Sheet Usage Configuration    0x205F Dryer Reduce Static Option Allowables
