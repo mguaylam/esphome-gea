@@ -60,11 +60,13 @@ binary_sensor:
 | `get_rx_frame_timeouts()` | `uint32_t` | a received frame is discarded because no byte arrived for 50 ms before its ETX (truncated frame; the parser resynchronises) |
 | `is_bus_connected()` | `bool` | `true` when a valid packet has been received in the last 30 s |
 | `get_dest_address()` | `uint8_t` | the appliance address in use (resolved by GEA2 address discovery, or as configured) |
-| `is_address_resolved()` | `bool` | `false` while GEA2 address discovery is still probing or halted; `true` once an address is known |
+| `is_address_resolved()` | `bool` | `false` while GEA2 address discovery is still probing (including when it has listed nodes but could not pick one); `true` once an address is known |
 
 On GEA2 with no `dest_address`, the discovered address is logged once at boot —
 which can scroll past before a network client connects. To print it again on
-demand, wire `log_address()` to `api: on_client_connected`:
+demand, wire `log_address()` to `api: on_client_connected`. While discovery is
+still unresolved, it prints the nodes heard so far instead (the same list also
+appears in the configuration dump a log client receives on connect):
 
 ```yaml
 api:
@@ -125,7 +127,7 @@ since the per-frame output is high-volume.
 | Level | What the GEA component emits | When to use it |
 |-------|------------------------------|----------------|
 | `ERROR` | *(none today)* | — |
-| `WARN` | CRC mismatch, ERD read/write failed (`result != 0`), request dropped after exhausting retries, subscribe-all rejected, unexpected response shape, discovery cap reached, GEA2 TX echo missing (wiring fault; reported with the 10 s stats) | Always visible — anomalies worth attention |
+| `WARN` | CRC mismatch, ERD read/write failed (`result != 0`), request dropped after exhausting retries, subscribe-all rejected, unexpected response shape, discovery cap reached, GEA2 TX echo missing (wiring fault; reported with the 10 s stats), GEA2 address discovery unresolved (nothing heard, or the list of nodes heard) | Always visible — anomalies worth attention |
 | `INFO` | ERD values read, auto-detected appliance address, subscription state changes, discovery progress/results, poll list built | Useful default in normal operation |
 | `CONFIG` | Configuration dump at boot (`dump_config`) | Startup only |
 | `DEBUG` *(default)* | STX / valid-packet markers, "ignoring packet" from another node, 10 s RX stats (includes the TX collision count on GEA2), write OK, retry on timeout, GEA2 collision detected + fast retry, GEA2 TX echo not seen within 100 ms | Routine diagnostics |
