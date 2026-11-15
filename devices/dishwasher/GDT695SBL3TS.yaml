@@ -5,6 +5,8 @@
 # Framework: ESP-IDF
 # Baud rate: 19200 (GEA2, half-duplex)
 # TX = GPIO9, RX = GPIO10
+# Run for several weeks on a custom adapter; only the board, pins and LEDs were retargeted to the FirstBuild
+#   adapter, which this exact file has not run on.
 #
 # Findings worth not rediscovering:
 # - This dishwasher is GEA2, not GEA3. None of the PDP715SYV0FS (GEA3) control ERDs exist here: 0x3204,
@@ -86,9 +88,9 @@ gea:
   uart_id: uart_gea
   protocol: gea2
   dest_address: 0x40     # the dishwasher; confirmed from the power-up announce frame
-  # Default is 2s. 26 ERDs are polled, so 2s means ~52 s per full refresh;
-  # 100ms brings that to ~2.6 s. Raise it if frame timeouts become frequent.
-  poll_interval: 100ms
+  # Refresh interval of each ERD: 26 ERDs every 3 s keep the bus about 30% busy
+  # (docs/hub.md, Bus saturation). Use poll_overrides to speed up single ERDs.
+  poll_interval: 3s
 
 # -----------------------------------------------------------------------------
 # Binary sensors
