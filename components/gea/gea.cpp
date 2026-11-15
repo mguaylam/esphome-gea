@@ -1066,7 +1066,14 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
       if (byte == GEA_STX) {
         rx_buf_.clear();
         rx_state_ = RxState::IN_PACKET;
-        ESP_LOGD(TAG, "RX: STX — frame started");
+        // Our own GEA2 transmission comes back through here too.  Keep that
+        // frame start out of the DEBUG log: one line per frame we send would
+        // drown the frames that are news.
+        if (gea2_echo_pending_) {
+          ESP_LOGV(TAG, "RX: STX — frame started (TX echo outstanding)");
+        } else {
+          ESP_LOGD(TAG, "RX: STX — frame started");
+        }
       } else if (byte != GEA_ACK) {
         ESP_LOGV(TAG, "RX: unexpected byte 0x%02X while idle", byte);
       }

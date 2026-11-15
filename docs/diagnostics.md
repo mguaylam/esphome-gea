@@ -129,7 +129,7 @@ since the per-frame output is high-volume.
 | `INFO` | ERD values read, auto-detected appliance address, subscription state changes, discovery progress/results, poll list built | Useful default in normal operation |
 | `CONFIG` | Configuration dump at boot (`dump_config`) | Startup only |
 | `DEBUG` *(default)* | STX / valid-packet markers, "ignoring packet" from another node, 10 s RX stats (includes the TX collision count on GEA2), write OK, retry on timeout, GEA2 collision detected + fast retry, GEA2 TX echo not seen within 100 ms | Routine diagnostics |
-| `VERBOSE` | Per-frame RX dump, unexpected bytes, unmatched responses, keep-alive, GEA2 TX echo verified / self-echo fallback drop | Deep wiring / protocol debugging |
+| `VERBOSE` | Per-frame RX dump, unexpected bytes, unmatched responses, keep-alive, GEA2 TX echo verified / self-echo drop, frame start while a GEA2 TX echo is outstanding | Deep wiring / protocol debugging |
 
 On the half-duplex GEA2 bus everything the MCU transmits is echoed back on RX
 (see [Protocol & internals](protocol.md)). The echo is decoded as a frame and
