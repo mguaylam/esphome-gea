@@ -17,6 +17,8 @@ jobs:
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -o /tmp/test_string_decode tests/host/test_string_decode.cpp
           /tmp/test_string_decode
+          g++ -std=c++17 -Wall -Wextra -Werror -I tests/host/stubs -I components/gea -o /tmp/test_gea2_echo tests/host/test_gea2_echo.cpp components/gea/gea.cpp
+          /tmp/test_gea2_echo
 
   compile-test:
     name: ${{ matrix.config }}
