@@ -1,0 +1,52 @@
+# Compile test — ESP32 with ESP-IDF framework, erd_lookup: true.
+# Run: esphome compile tests/components/gea/test.esp32-idf.erd-lookup.yaml
+#
+# Every other fixture runs with erd_lookup: false. This one is the sole compile
+# coverage for the -DGEA_ERD_LOOKUP codegen path, which generates the ERD table
+# from the erd-definitions submodule. Device configs rely on this path, so it
+# needs coverage here rather than through per-device compiles.
+
+esphome:
+  name: gea-test-erd-lookup
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: ../../../components
+    components: [gea]
+
+# Disable logger UART so no platform conflicts with the GEA UART pin choice.
+logger:
+  baud_rate: 0
+
+uart:
+  id: uart_gea
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 230400
+
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  src_address: 0xBB
+  dest_address: 0xC0
+  erd_lookup: true
+
+sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: "u8"
+    erd: 0x0001
+    decode: uint8
+
+text_sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Model"
+    erd: 0x0001
+    decode: ascii

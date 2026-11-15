@@ -2,6 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/optional.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/preferences.h"
@@ -122,6 +123,14 @@ class GEAEntity {
   // Used by writable entities (select, number) to convert a value back to ERD bytes.
   void encode_to_bytes(uint32_t val, std::vector<uint8_t> &out) const;
 
+  // Write value_bytes into the write ERD starting at byte_offset_, preserving the
+  // ERD's other bytes via read-modify-write against the hub's cached payload. This
+  // lets several entities share one multi-byte ERD (e.g. one switch per ice maker on
+  // 0x100A) without clobbering each other's bytes. At a non-zero offset with nothing
+  // cached yet the write is skipped (we can't preserve unknown bytes); at offset 0
+  // with no cache it falls back to writing value_bytes as the whole ERD.
+  void write_value_at_offset_(const std::vector<uint8_t> &value_bytes) const;
+
  public:
   // Common ERD info dump shared by every entity's dump_config().
   void dump_erd_config(const char *tag) const {
@@ -155,6 +164,15 @@ struct PendingRequest {
   bool is_discovery{false};
 };
 
+// One entry in the GEA2 poll schedule. Each polled ERD carries its own refresh
+// target (interval_ms) — the per-ERD override if configured, otherwise the
+// hub-wide default — and the timestamp of its last issued read (last_poll_ms).
+struct Gea2PollEntry {
+  uint16_t erd;
+  uint32_t interval_ms;
+  uint32_t last_poll_ms;
+};
+
 // ---------------------------------------------------------------------------
 // GEAComponent — the hub component; owns UART, discovery, and subscription
 // ---------------------------------------------------------------------------
@@ -170,11 +188,15 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // dest_address is optional: if not called, auto-detect is used instead.
   void set_dest_address(uint8_t addr) {
     dest_addr_ = addr;
+    dest_configured_ = true;
     auto_detect_ = false;
   }
   void set_src_address(uint8_t addr) { src_addr_ = addr; }
   void set_protocol(Protocol p) { protocol_ = p; }
   void set_poll_interval(uint32_t ms) { poll_interval_ms_ = ms; }
+  // Per-ERD poll interval override (GEA2). ERDs without an override fall back to
+  // the hub-wide poll_interval. See poll_overrides_ / build_poll_list_().
+  void add_poll_override(uint16_t erd, uint32_t interval_ms) { poll_overrides_[erd] = interval_ms; }
   void set_gea2_discovery(bool enabled) { gea2_discovery_ = enabled; }
 
   // ---- Child entity registration ------------------------------------------
@@ -183,6 +205,23 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // ---- Called by writable entities (select, number, etc.) -----------------
   void write_erd(uint16_t erd, const std::vector<uint8_t> &data);
 
+  // Last full payload received for erd, or nullptr if none has been seen yet.
+  // Used by writable entities for read-modify-write into multi-byte ERDs.
+  const std::vector<uint8_t> *get_cached_erd(uint16_t erd) const {
+    auto it = discovered_erds_.find(erd);
+    return it == discovered_erds_.end() ? nullptr : &it->second;
+  }
+
+  // Optimistically overwrite the cached payload for an already-known ERD so a second
+  // entity on the same ERD read-modify-writes against the just-written value, even
+  // before the post-write re-read (GEA2) or publication (GEA3) lands. No-op if the
+  // ERD has never been received, so it never creates a blind or partial baseline.
+  void prime_erd_cache(uint16_t erd, const std::vector<uint8_t> &data) {
+    auto it = discovered_erds_.find(erd);
+    if (it != discovered_erds_.end())
+      it->second = data;
+  }
+
   // ---- Explicit read — enqueues a single ERD read request -----------------
   void read_erd(uint16_t erd);
 
@@ -190,7 +229,29 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // Returns true if a valid packet has been received within the last 30 s.
   bool is_bus_connected() const { return last_rx_ms_ != 0 && (millis() - last_rx_ms_) < 30000; }
 
+  // The appliance (destination) address the hub talks to. On GEA2 with no
+  // dest_address this is filled in by address discovery; while still probing it
+  // reads as the broadcast address (0xFF). Surface it as a template text_sensor
+  // to keep it visible after boot (the discovery log only prints once):
+  //   text_sensor:
+  //     - platform: template
+  //       name: "GEA appliance address"
+  //       entity_category: diagnostic
+  //       lambda: |-
+  //         char buf[7];
+  //         snprintf(buf, sizeof(buf), "0x%02X", id(gea_hub).get_dest_address());
+  //         return std::string(buf);
+  uint8_t get_dest_address() const { return dest_addr_; }
+  // False while GEA2 address discovery is still probing or has halted on an
+  // ambiguous bus; true once an address is known (discovered or configured).
+  bool is_address_resolved() const { return !gea2_addr_discovery_; }
+
   // ---- Diagnostics — callable from YAML lambdas ---------------------------
+  // Logs the appliance address and how it was determined, at INFO level. The
+  // address is printed once at boot; call this on api: on_client_connected to
+  // see it again after connecting over the network.
+  void log_address() const;
+
   // Logs all discovered ERDs at INFO level. Useful to call on api: on_client_connected
   // so the list appears each time you open the console.
   void log_erds() const;
@@ -205,6 +266,8 @@ class GEAComponent : public uart::UARTDevice, public Component {
   uint32_t get_crc_errors() const { return crc_errors_; }
   uint32_t get_tx_retries() const { return tx_retries_; }
   uint32_t get_dropped_requests() const { return dropped_requests_; }
+  uint32_t get_tx_collisions() const { return tx_collisions_; }
+  uint32_t get_rx_frame_timeouts() const { return rx_frame_timeouts_; }
 
   // ---- on_erd_change triggers (registered from Python codegen) ------------
   void register_erd_change_trigger(ErdChangeTrigger *trigger) { erd_change_triggers_.push_back(trigger); }
@@ -214,7 +277,7 @@ class GEAComponent : public uart::UARTDevice, public Component {
   void send_packet_(uint8_t dest, const std::vector<uint8_t> &payload);
   void send_ack_();
   void send_subscribe_all_(uint8_t type = 0x00);
-  void send_pub_ack_(uint8_t context, uint8_t request_id);
+  void send_pub_ack_(uint8_t dest, uint8_t context, uint8_t request_id);
 
   // Request queue / retry machinery
   uint8_t next_req_id_();
@@ -224,6 +287,11 @@ class GEAComponent : public uart::UARTDevice, public Component {
   void finish_pending_();
   bool response_matches_pending_(uint8_t response_cmd, uint8_t req_id) const;
   bool gea2_response_matches_pending_(uint8_t response_cmd, uint16_t erd) const;
+
+  // GEA2 collision avoidance (bus-idle gate) and detection (TX echo check)
+  bool gea2_bus_clear_() const;
+  bool settle_gea2_echo_(const std::vector<uint8_t> &pkt);
+  void gea2_collision_(const char *evidence);
 
   // RX state machine
   void process_rx_byte_(uint8_t byte);
@@ -272,6 +340,61 @@ class GEAComponent : public uart::UARTDevice, public Component {
   PendingRequest pending_{};
   bool pending_active_{false};
 
+  // GEA2 collision handling (single-wire half-duplex bus — every node hears
+  // every byte, including its own transmissions).
+  //
+  // Avoidance: a transmission may only start after the line has been silent
+  // for GEA2_TX_IDLE_MS.  One byte at 19200 baud is ~0.52 ms, so 10 ms of
+  // silence places us well clear of other nodes' frames and inter-byte gaps.
+  static constexpr uint32_t GEA2_TX_IDLE_MS = 10;
+  // Detection: every transmission comes back on RX as a frame of our own, and
+  // is settled when the parser completes it — verified if it is intact, a
+  // collision if a damaged frame turns up instead (settle_gea2_echo_), or if
+  // a frame is cut short and discarded (RX_FRAME_TIMEOUT_MS, which is shorter
+  // than this window for that reason).  If none of that happens within this
+  // window, assume it never will and unwedge: a collision if the parser
+  // abandoned an unfinished frame meanwhile (gea2_echo_frame_abandoned_),
+  // otherwise a missing echo (TX open / RX mute).
+  static constexpr uint32_t GEA2_ECHO_TIMEOUT_MS = 100;
+  // A frame that starts (STX) but never terminates (ETX) must not hold the
+  // parser out of IDLE indefinitely: that wedges gea2_bus_clear_() and
+  // deadlocks the GEA2 poller.  Measured as silence since the last received
+  // byte (last_rx_byte_ms_), checked after RX has been drained.  A frame has
+  // no gaps between its bytes on the wire — GE's reference firmware
+  // (tiny-gea-api) abandons a GEA2 frame after 6 ms of inter-byte silence —
+  // so the only gap seen here is how the UART hands bytes over: with ESPHome's
+  // defaults at most ~10 ms apart on ESP32.  50 ms clears that with margin.
+  // (An ESP32 `rx_full_threshold` raised to its 120-byte maximum hands a
+  // longer GEA2 frame over in 62 ms steps and would trip this.)
+  static constexpr uint32_t RX_FRAME_TIMEOUT_MS = 50;
+  // Hard ceiling on the unescaped frame buffer.  LEN is a single byte, so no
+  // legitimate frame exceeds 255 bytes; anything larger is line noise.
+  static constexpr size_t RX_FRAME_MAX_BYTES = 260;
+  // After a detected collision the pending request is retried after a short
+  // random backoff (min + [0, span)) instead of the full request timeout.
+  static constexpr uint32_t GEA2_COLLISION_BACKOFF_MIN_MS = 2;
+  static constexpr uint32_t GEA2_COLLISION_BACKOFF_SPAN_MS = 18;
+  bool gea2_echo_pending_{false};  // a transmitted frame has not come back yet
+  // The parser dropped an unfinished frame (restart on STX, or overflow) while
+  // the echo was outstanding.  Not a verdict by itself — our echo may still
+  // follow intact — so it is only read when the echo window expires.
+  bool gea2_echo_frame_abandoned_{false};
+  uint32_t gea2_echo_at_ms_{0};  // when that frame was written (for the timeout)
+  // Echo bookkeeping since boot, for the wiring report in the periodic stats:
+  // frames written to the wire, how many never came back, and how many of
+  // those have already been reported.
+  uint32_t gea2_tx_frames_{0};
+  uint32_t gea2_echo_missing_{0};
+  uint32_t gea2_echo_missing_reported_{0};
+  // Runs loop() continuously while a GEA2 exchange is in flight so echo
+  // settlement, backoff retries and the bus-idle gate react at millisecond
+  // resolution instead of the ~16 ms default loop interval.  Released as soon
+  // as the bus goes quiet, so the idle polling cadence costs nothing.
+  HighFrequencyLoopRequester high_freq_;
+  // Timestamp of the last byte seen on RX — any byte, framed or not. Drives
+  // the bus-idle gate; last_rx_ms_ can't, it only moves on valid packets.
+  uint32_t last_rx_byte_ms_{0};
+
   // Timestamp of the last successfully received packet (ms since boot, 0 = none).
   uint32_t last_rx_ms_{0};
 
@@ -284,12 +407,14 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // Raw byte counter — reported periodically so we can confirm UART is alive.
   uint32_t rx_byte_count_{0};
+  uint32_t rx_frame_timeouts_{0};  // frames discarded by RX_FRAME_TIMEOUT_MS
   uint32_t last_stats_ms_{0};
 
   // Diagnostics counters exposed via get_*() accessors.
   uint32_t crc_errors_{0};
   uint32_t tx_retries_{0};
   uint32_t dropped_requests_{0};
+  uint32_t tx_collisions_{0};
 
   // ERD discovery map: ERD address → most recently received data bytes.
   // Populated on first publication of each ERD; updated silently thereafter.
@@ -298,14 +423,44 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // User-configured on_erd_change triggers (see gea.on_erd_change in YAML).
   std::vector<ErdChangeTrigger *> erd_change_triggers_;
 
-  // GEA2 round-robin poller: built lazily on first poll from registered
-  // entities and on_erd_change triggers (deduplicated). Empty in GEA3 mode.
-  std::vector<uint16_t> poll_erds_;
-  size_t poll_index_{0};
-  uint32_t last_poll_ms_{0};
+  // GEA2 per-ERD poller: built lazily on first poll from registered entities
+  // and on_erd_change triggers (deduplicated). Each ERD refreshes at its own
+  // interval (override or the hub-wide default); poll_next_() serves the most
+  // overdue due ERD, which is starvation-free. Empty in GEA3 mode.
+  std::vector<Gea2PollEntry> poll_erds_;
+  std::map<uint16_t, uint32_t> poll_overrides_;  // erd -> interval_ms (from YAML)
   bool poll_list_built_{false};
   void build_poll_list_();
+  void add_poll_erd_(uint16_t erd);
   void poll_next_();
+  // Estimated bus time of one GEA2 read-and-response (~30-40 ms at 19200 baud).
+  // Used as the cost basis for the bus-occupancy estimate and the floor below
+  // which a per-ERD interval cannot be met. Keep in sync with GEA2_READ_FLOOR_MS
+  // in __init__.py.
+  static constexpr uint32_t GEA2_POLL_COST_MS = 35;
+  // Bus-busy time accumulated over the current stats window (successful GEA2
+  // read/write round-trips), used to report measured bus occupancy.
+  uint32_t gea2_busy_ms_{0};
+
+  // GEA2 active address discovery — engaged when dest_address is omitted in YAML.
+  // We broadcast a read of a universal identity ERD; the appliance reveals its
+  // address in the SRC field of its response. On a multi-node bus more than one
+  // node may answer, so we collect distinct responders over a short window and
+  // only auto-adopt when exactly one replies (otherwise halt and ask the user).
+  static constexpr uint16_t GEA2_ADDR_PROBE_ERD = 0x0001;        // model number — present on every appliance
+  static constexpr uint32_t GEA2_ADDR_PROBE_WINDOW_MS = 500;     // collect responders this long after each probe
+  static constexpr uint32_t GEA2_ADDR_PROBE_COOLDOWN_MS = 1000;  // idle gap between probe rounds
+  static constexpr uint8_t GEA2_ADDR_PROBE_LOUD_ATTEMPTS = 5;    // throttle the "no response" warning after this many
+  bool dest_configured_{false};                                  // set_dest_address() was called from YAML
+  bool gea2_addr_discovery_{false};                              // actively probing the bus for the appliance address
+  bool addr_discovery_halted_{false};  // multiple responders — waiting for a manual dest_address
+  bool addr_probe_inflight_{false};    // a probe is out; collecting responders this round
+  uint32_t addr_probe_at_ms_{0};       // start of the current probe window / cooldown
+  uint32_t addr_probe_attempts_{0};
+  std::vector<uint8_t> addr_candidates_;  // distinct responder SRC addresses seen this round
+  void drive_gea2_addr_discovery_();
+  void send_gea2_addr_probe_();
+  void record_addr_candidate_(uint8_t src);
 
   // GEA2 ERD discovery (opt-in via gea2_discovery: true in YAML).
   // On first boot: scans GEA2_DISCOVERY_TABLE, saves responsive ERDs to NVS.
@@ -320,8 +475,19 @@ class GEAComponent : public uart::UARTDevice, public Component {
   std::vector<uint16_t> discovery_found_erds_;  // ERDs that responded — info only
   ESPPreferenceObject discovery_pref_;
 
+  // Bus-liveness gate: the scan only advances while the bus is responsive, so a
+  // dead/unpowered bus at boot (or an appliance powered off mid-scan) never
+  // burns through all ERDs and persists a useless empty result. While the bus
+  // is quiet we periodically read a universal ERD (model number) until it
+  // answers — GEA2 has no spontaneous traffic, so is_bus_connected() can only
+  // turn true once one of our reads gets a response.
+  static constexpr uint16_t GEA2_LIVENESS_ERD = 0x0001;
+  static constexpr uint32_t DISCOVERY_PROBE_INTERVAL_MS = 2000;
+  uint32_t discovery_probe_ms_{0};
+
   void discovery_init_();
   void discovery_enqueue_next_();
+  void discovery_probe_bus_();
   void discovery_on_response_(uint16_t erd);
   void discovery_on_timeout_();
   void discovery_advance_();

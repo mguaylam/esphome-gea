@@ -64,6 +64,15 @@ Don't expose the delayed-start ERD as a writable entity (e.g. washer ERD
 `0x2038`). Writing to it brings the machine out of sleep mode whether you
 wanted to or not. **Read-only is fine.**
 
+## `log_address()` on `on_client_connected` doesn't print anything
+
+`on_client_connected` fires at authentication, just before the client sends its
+log-subscribe request, and the logger doesn't replay past lines — so a one-shot
+line emitted exactly on connect can be missed by the client that just connected.
+Add a short `delay: 1s` before the lambda so the subscription is in place first
+(see [Diagnostics](diagnostics.md#lambda-accessors)). The discovered
+address is always written to the boot/serial log regardless.
+
 ## See also
 
 - [ERD Discovery](erd-discovery.md)

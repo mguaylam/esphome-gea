@@ -111,7 +111,9 @@ sequenceDiagram
 
 GEA2 has no subscriptions, so the hub polls each declared ERD in turn. Since
 the bus is half-duplex the hub also sees its own transmission echoed back —
-those echoes are filtered out by checking the `dest` field.
+that echo is decoded like any other frame, recognised by its source address,
+and used to verify the transmission (see
+[Collision handling](#collision-handling-gea2)).
 
 ```mermaid
 sequenceDiagram
@@ -220,6 +222,24 @@ board:
 Schematic of the official board:
 [geappliances/home-assistant-adapter/doc/schematic-v1.0.pdf](https://github.com/geappliances/home-assistant-adapter/blob/main/doc/schematic-v1.0.pdf).
 
+### Hardware baseline
+
+This component targets the FirstBuild / GE Home Assistant Adapter electrical
+design as its reference, and expects other boards to conform to it. On GEA2
+that means one property in particular: **the bus signal is fed back into the
+MCU RX, so every transmitted frame returns as an echo**. Collision detection
+is built on that echo, and a board that does not return it cannot detect
+collisions at all — on a bus it shares with the appliance's own control and UI
+traffic.
+
+Board variations are supported when they can be expressed in ESPHome's `uart`
+component — pin choice, `inverted: true`, baud rate — because those cost nothing
+here. They are not supported when they would require a separate code path inside
+this component. A wiring that does not return the echo is reported with a
+`WARN` (see [Diagnostics](diagnostics.md)): each transmission then holds the
+bus-clear gate until the 100 ms echo window expires, and collisions go
+undetected. Fixing the adapter is the remedy, not a compatibility mode.
+
 ## Collision handling (GEA2)
 
 Because GEA2 is a multi-node bus, two nodes can start transmitting at the
@@ -229,37 +249,76 @@ byte is compared against what comes back on RX, and a mismatch triggers an
 immediate abort + pseudo-random backoff (≈43–106 ms, derived from the
 node's address).
 
-**What this component does today:**
+**What this component does:**
 
-- The bus self-echo is filtered out by checking the `dest` field against
-  our own `src_address` — packets we sent ourselves are discarded before
-  parsing.
-- We do **not** verify the echo byte-by-byte and we do **not** implement
-  the backoff FSM.
-- If a collision corrupts our request, we recover via the standard
-  request-reliability path (250 ms timeout × 10 retries — see below).
+- **Collision avoidance** — a request (initial send, retry, or
+  address-discovery probe) only goes on the wire when the bus is clear: no
+  frame mid-reception, no echo of our own transmission still outstanding,
+  and ≥10 ms of line silence (~19 byte-times at 19200 baud). Immediate ACK
+  responses are exempt — the peer expects them right after its frame.
+- **Collision detection, per frame** — the echo is not intercepted ahead of
+  the parser. Every received byte goes through the same frame parser, and
+  while an echo is outstanding each completed frame settles it:
+  - a frame carrying our own source address with a valid CRC *is* the echo,
+    intact — the transmission is verified (the CRC vouches for every byte,
+    so no separate comparison is kept);
+  - an intact frame from another node is ordinary traffic that reached the
+    parser first — it is handled normally and the echo stays outstanding;
+  - a damaged frame (too short, failing its CRC, or cut short and discarded
+    after 50 ms of silence) is what two overlapping transmissions leave
+    behind — a collision. The pending request is resent after a short
+    random backoff (2–19 ms) instead of waiting out the full 250 ms
+    timeout. Detected collisions are counted (`get_tx_collisions()` — see
+    [Diagnostics](diagnostics.md)) and included in the periodic RX stats
+    log line.
 
-**Why it works in practice:**
+  Nothing is assumed about where the echo sits in the RX stream, so bytes
+  from another node that are read before it are not mistaken for a
+  collision.
+- **Millisecond responsiveness** — while an exchange is in flight the
+  component holds ESPHome's high-frequency loop request, so the idle gate,
+  echo settlement and backoff retry run at millisecond resolution instead of
+  the ~16 ms default loop interval. The request is released as soon as the
+  bus goes quiet, so idle polling costs nothing.
+- **Wiring diagnostics** — an echo that has not come back as a frame within
+  100 ms, with no unfinished frame dropped in the meantime, is counted, and
+  the count is reported with a WARNING alongside the periodic RX stats (TX
+  not reaching the bus, or RX not hearing it) instead of looking like an
+  ordinary response timeout.
 
-The other nodes on the bus run `tiny-gea-api` (or equivalent) and **do**
-detect collisions on their side, so they back off and retransmit within
-~50 ms. We notice the missing response 250 ms later and retry. Both sides
-eventually converge — at the cost of slightly higher latency on our end
-during a collision.
+**What it still doesn't do, and why:**
 
-**What we lose by not implementing byte-level CD:**
+- **No mid-frame abort, hence no byte-level check.** The frame is committed
+  to the UART FIFO as a whole, so a divergent echo byte could not stop it:
+  the frame is already on the wire. The reference firmware transmits
+  byte-by-byte and aborts on the first divergent byte, but doing that here
+  would mean busy-waiting between bytes (blocking ESPHome's cooperative loop
+  for the frame duration) or a custom ISR behind the `uart` component's
+  back. Since the retry has to wait for the frame to end and the bus to go
+  quiet either way, the echo is judged once, when the frame completes —
+  at 19200 baud a frame is 5–20 ms, so the difference is small.
+- **A collision that leaves no frame end is caught late.** If the overlap
+  destroys the ETX, the parser has no frame to judge until it gives the
+  truncated one up after 50 ms of silence; the fast retry starts from there
+  rather than from the end of the frame. If another node's frame arrives
+  inside those 50 ms, the parser restarts on its STX instead and the
+  unfinished frame is dropped without a verdict — the restart could just as
+  well be our own STX landing on someone else's frame, with our echo about to
+  follow intact. That case is settled when the 100 ms echo window expires: an
+  unfinished frame dropped in the window and no intact echo since is a
+  collision, and the fast retry starts from there.
+- **A small race window remains.** The bus-clear check runs in `loop()`, so
+  another node can still start transmitting between the check and the
+  write. The high-frequency loop shrinks that window to roughly millisecond
+  scale but cannot close it; a collision in the window is caught by echo
+  verification and retried.
 
-- Slower recovery after a collision (250 ms timeout vs ~50 ms backoff).
-- We can briefly corrupt another node's in-flight frame before its CD
-  catches it, forcing it to retransmit. No data loss, just bus noise.
-- Less informative diagnostics on hardware faults: a missing echo today
-  looks the same as a missing response (timeout + retry), whereas
-  byte-level CD would flag wiring/power issues immediately.
-
-This is a known and intentional trade-off — see
+The other nodes on the bus run `tiny-gea-api` (or equivalent) and detect
+collisions on their side too, so after a collision both parties back off
+and converge. See
 [Discussion #3](https://github.com/mguaylam/esphome-gea/discussions/3) for
-field reports and the conditions under which a byte-level CD implementation
-might be worth the added complexity.
+field reports, including what the `TX collisions` counter does on real
+buses.
 
 ## Request reliability
 
@@ -283,8 +342,8 @@ single-in-flight queue with deterministic retry:
   - **GEA3**: incoming responses whose `request_id` doesn't match the
     pending request are ignored.
   - **GEA2**: incoming responses whose ERD doesn't match the pending request
-    are ignored. Self-echoes on the half-duplex bus are filtered earlier by
-    the `dest` check, so they never reach this stage.
+    are ignored. Self-echoes on the half-duplex bus are dropped earlier by
+    their source address, so they never reach this stage.
 - **Unsolicited frames bypass the queue** — ACKs, publications, publication
   ACKs, and subscription host startup packets are not request/response pairs
   and are processed independently. (GEA2 has none of these.)

@@ -21,6 +21,32 @@ switch:
     write_erd: 0x3232    # but write to this one
 ```
 
+## Multiple switches on one ERD
+
+Some ERDs pack several independent values into one payload — for example the GE
+ice-maker control ERD `0x100A` holds one byte per ice maker (`0xFF` = not present).
+Bind one switch to each byte with `byte_offset`:
+
+```yaml
+switch:
+  - platform: gea
+    gea_id: gea_hub
+    name: "Ice Maker — Fridge"
+    erd: 0x100A
+    byte_offset: 0
+  - platform: gea
+    gea_id: gea_hub
+    name: "Ice Maker — Freezer"
+    erd: 0x100A
+    byte_offset: 1
+```
+
+On toggle the switch does a read-modify-write: it starts from the last full payload
+seen for the ERD, replaces only its own byte, and writes the whole payload back, so
+the other bytes are preserved. A write at a non-zero `byte_offset` is skipped (with a
+warning) until the ERD has been read at least once, since the other bytes aren't yet
+known — on GEA2 this resolves within one poll cycle, on GEA3 on the next publication.
+
 ## Configuration variables
 
 - **gea_id** (*Required*, [ID](https://esphome.io/guides/configuration-types#config-id)):

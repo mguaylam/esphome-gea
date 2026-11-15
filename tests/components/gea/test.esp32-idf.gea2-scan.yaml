@@ -1,0 +1,20 @@
+# Compile test — ESP32 with ESP-IDF framework, GEA2 protocol, ERD discovery
+# enabled (GEA_GEA2_DISCOVERY path + bus-liveness gate). Run:
+#   esphome compile tests/components/gea/test.esp32-idf.gea2-scan.yaml
+
+esphome:
+  name: gea-test-gea2-scan
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+uart:
+  id: uart_gea
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 19200
+
+packages:
+  common: !include common.gea2-scan.yaml

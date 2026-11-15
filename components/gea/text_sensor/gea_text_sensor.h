@@ -3,6 +3,7 @@
 #include "esphome/core/component.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "../gea.h"
+#include "../string_decode.h"
 #include <map>
 
 namespace esphome {
@@ -17,11 +18,11 @@ class GEATextSensor : public text_sensor::TextSensor, public GEAEntity, public C
       return;
 
     if (decode_ == GeaDecodeType::ASCII) {
-      // Trim trailing nulls and publish as a string
-      size_t len = data.size();
-      while (len > 0 && data[len - 1] == 0x00)
-        len--;
-      publish_state(std::string(data.begin(), data.begin() + len));
+      if (is_length_prefixed_string(data)) {
+        static const char *const TAG = "text_sensor.gea";
+        ESP_LOGD(TAG, "ERD 0x%04X: length-prefixed string (len=%u), stripping prefix", erd_, data[0]);
+      }
+      publish_state(decode_ascii_string(data));
     } else if (!options_.empty()) {
       // Decode as number, look up in options map
       auto key = (uint32_t)decode_as_float(data);

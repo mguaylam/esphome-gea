@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 56" width="300" height="112" role="img" aria-labelledby="logo-title">
+  <title id="logo-title">esphome-gea</title>
+  <!-- A GEA frame: STX and ETX delimiters (amber) around three payload bytes
+       (blue) that spell G, E, A. The letters are drawn as paths, so the file
+       needs no font, and the colours hold on light and dark backgrounds. -->
+  <rect x="2" y="4" width="12" height="48" rx="4" fill="#d29922"/>
+  <rect x="20" y="10" width="34" height="36" rx="6" fill="#388bfd"/>
+  <rect x="58" y="10" width="34" height="36" rx="6" fill="#388bfd"/>
+  <rect x="96" y="10" width="34" height="36" rx="6" fill="#388bfd"/>
+  <g fill="none" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M44 23 Q44 19 40 19 H34 Q30 19 30 23 V33 Q30 37 34 37 H40 Q44 37 44 33 V29 H38"/>
+    <path d="M82 19 H68 V37 H82 M68 28 H79"/>
+    <path d="M106 37 V25 Q106 19 113 19 Q120 19 120 25 V37 M106 30 H120"/>
+  </g>
+  <rect x="136" y="4" width="12" height="48" rx="4" fill="#d29922"/>
+</svg>

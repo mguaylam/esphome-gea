@@ -35,6 +35,13 @@ sensor:
     lambda: 'return id(gea_hub).get_dropped_requests();'
     update_interval: 30s
 
+  - platform: template
+    name: "GEA TX Collisions"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    lambda: 'return id(gea_hub).get_tx_collisions();'
+    update_interval: 30s
+
 binary_sensor:
   - platform: template
     name: "GEA Bus Connected"
@@ -49,7 +56,51 @@ binary_sensor:
 | `get_crc_errors()` | `uint32_t` | a framed packet whose CRC does not match |
 | `get_tx_retries()` | `uint32_t` | a pending request times out and is resent |
 | `get_dropped_requests()` | `uint32_t` | a pending request exhausts all retries |
+| `get_tx_collisions()` | `uint32_t` | a GEA2 bus collision is detected (a damaged frame arrives while the echo of our transmission is outstanding — see [Protocol & internals](protocol.md)) |
+| `get_rx_frame_timeouts()` | `uint32_t` | a received frame is discarded because no byte arrived for 50 ms before its ETX (truncated frame; the parser resynchronises) |
 | `is_bus_connected()` | `bool` | `true` when a valid packet has been received in the last 30 s |
+| `get_dest_address()` | `uint8_t` | the appliance address in use (resolved by GEA2 address discovery, or as configured) |
+| `is_address_resolved()` | `bool` | `false` while GEA2 address discovery is still probing or halted; `true` once an address is known |
+
+On GEA2 with no `dest_address`, the discovered address is logged once at boot —
+which can scroll past before a network client connects. To print it again on
+demand, wire `log_address()` to `api: on_client_connected`:
+
+```yaml
+api:
+  on_client_connected:
+    - lambda: 'id(gea_hub).log_address();'
+```
+
+`on_client_connected` fires at authentication, just before the client sends its
+log-subscribe request, and the logger does not replay past lines — so a one-shot
+line emitted exactly on connect can occasionally be missed by the client that
+just connected. If you don't see it, add a short delay so the subscription is in
+place first:
+
+```yaml
+api:
+  on_client_connected:
+    - delay: 1s
+    - lambda: 'id(gea_hub).log_address();'
+```
+
+The address is always written to the boot/serial log regardless; this is only
+the convenience path for reading it over the network after boot.
+
+If you'd rather have it always visible in Home Assistant, `get_dest_address()`
+exposes it for a persistent diagnostic `text_sensor`:
+
+```yaml
+text_sensor:
+  - platform: template
+    name: "GEA appliance address"
+    entity_category: diagnostic
+    lambda: |-
+      char buf[7];
+      snprintf(buf, sizeof(buf), "0x%02X", id(gea_hub).get_dest_address());
+      return std::string(buf);
+```
 
 ## Interpreting the counters
 
@@ -59,6 +110,38 @@ binary_sensor:
   concerning and warrants protocol-level inspection (start with
   [Troubleshooting](troubleshooting.md)).
 - **TX retries** is normal in small numbers under bus contention.
+- **TX collisions** (GEA2) should stay flat or tick up only occasionally —
+  each one is recovered automatically with a fast retry. A steadily climbing
+  counter means heavy bus contention and is worth a field report in
+  [Discussion #3](https://github.com/mguaylam/esphome-gea/discussions/3).
+  The counter also appears in the 10 s RX stats log line.
+
+## Logging levels
+
+The component logs at the standard ESPHome levels. The default level is
+`DEBUG`; raise it to `VERBOSE` only when chasing a wiring or protocol problem,
+since the per-frame output is high-volume.
+
+| Level | What the GEA component emits | When to use it |
+|-------|------------------------------|----------------|
+| `ERROR` | *(none today)* | — |
+| `WARN` | CRC mismatch, ERD read/write failed (`result != 0`), request dropped after exhausting retries, subscribe-all rejected, unexpected response shape, discovery cap reached, GEA2 TX echo missing (wiring fault; reported with the 10 s stats) | Always visible — anomalies worth attention |
+| `INFO` | ERD values read, auto-detected appliance address, subscription state changes, discovery progress/results, poll list built | Useful default in normal operation |
+| `CONFIG` | Configuration dump at boot (`dump_config`) | Startup only |
+| `DEBUG` *(default)* | STX / valid-packet markers, "ignoring packet" from another node, 10 s RX stats (includes the TX collision count on GEA2), write OK, retry on timeout, GEA2 collision detected + fast retry, GEA2 TX echo not seen within 100 ms | Routine diagnostics |
+| `VERBOSE` | Per-frame RX dump, unexpected bytes, unmatched responses, keep-alive, GEA2 TX echo verified / self-echo drop, frame start while a GEA2 TX echo is outstanding | Deep wiring / protocol debugging |
+
+On the half-duplex GEA2 bus everything the MCU transmits is echoed back on RX
+(see [Protocol & internals](protocol.md)). The echo is decoded as a frame and
+recognised by its source address matching our own: silently when it comes back
+intact (`VERBOSE` confirms it), at `DEBUG` when a damaged frame arrives in its
+place (collision detected, fast retry) or when nothing comes back within
+100 ms. Echoes that never came back are totalled and reported with a `WARN`
+next to the 10 s RX stats, as `N of M frames sent since boot` — a count that
+tracks the frames sent means the wiring does not return the echo at all (see
+the hardware baseline in [Protocol & internals](protocol.md)). The echoed frame
+itself is dropped at `VERBOSE` — it does not count toward bus liveness and is
+not treated as foreign traffic.
 
 ## See also
 

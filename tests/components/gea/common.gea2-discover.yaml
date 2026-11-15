@@ -1,0 +1,29 @@
+external_components:
+  - source:
+      type: local
+      path: ../../../components
+    components: [gea]
+
+# Disable logger UART so no platform conflicts with the GEA UART pin choice
+# in the compile tests. (Production configs leave this at default.)
+logger:
+  baud_rate: 0
+
+# ---------------------------------------------------------------------------
+# Hub — GEA2 mode with NO dest_address. The component probes the bus at boot
+# (broadcast read of a universal ERD) to discover the appliance address, then
+# polls normally. Exercises the active address-discovery code path.
+# ---------------------------------------------------------------------------
+gea:
+  id: gea_hub
+  uart_id: uart_gea
+  protocol: gea2
+  src_address: 0xBB
+  poll_interval: 3s
+
+sensor:
+  - platform: gea
+    gea_id: gea_hub
+    name: "u8"
+    erd: 0x0001
+    decode: uint8

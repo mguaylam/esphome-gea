@@ -18,7 +18,9 @@ esp32:
     type: esp-idf
 
 external_components:
-  - source: github://mguaylam/esphome-gea
+  - source:
+      type: local
+      path: ../../components
     components: [gea]
 
 logger:

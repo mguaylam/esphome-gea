@@ -1,4 +1,5 @@
 import json
+import logging
 import subprocess
 from pathlib import Path
 
@@ -7,6 +8,13 @@ import esphome.config_validation as cv
 from esphome import automation
 from esphome.components import uart
 from esphome.const import CONF_ID, CONF_TRIGGER_ID
+
+_LOGGER = logging.getLogger(__name__)
+
+# Approximate bus time of one GEA2 read-and-response at 19200 baud. Per-ERD
+# intervals below this cannot be met (the bus is the bottleneck), so we warn.
+# Keep in sync with GEA2_POLL_COST_MS in gea.h.
+GEA2_READ_FLOOR_MS = 35
 
 
 def _load_erd_table():
@@ -173,6 +181,8 @@ CONF_MULTIPLIER = "multiplier"
 CONF_OFFSET = "offset"
 CONF_PROTOCOL = "protocol"
 CONF_POLL_INTERVAL = "poll_interval"
+CONF_POLL_OVERRIDES = "poll_overrides"
+CONF_INTERVAL = "interval"
 CONF_GEA2_DISCOVERY = "gea2_discovery"
 
 GeaDecodeType = gea_ns.enum("GeaDecodeType")
@@ -240,15 +250,50 @@ def validate_nonzero_multiplier(value):
     return f
 
 
-def _validate_gea2_requires_dest(config):
-    """GEA2 has no spontaneous traffic, so auto-detect can't work — require dest_address."""
-    if config[CONF_PROTOCOL] == "gea2" and CONF_DEST_ADDRESS not in config:
-        raise cv.Invalid(
-            "protocol: gea2 requires dest_address (auto-detect needs spontaneous "
-            "traffic that GEA2 doesn't produce). Typical value: 0xC0."
-        )
+def _validate_gea2_options(config):
+    """gea2_discovery and poll_overrides only apply to GEA2.
+
+    dest_address may be omitted for GEA2: the component then probes the bus
+    (broadcast read of a universal ERD) to discover the appliance address and
+    logs it. Pinning dest_address explicitly skips that probe on every boot.
+
+    poll_overrides set a per-ERD poll interval; the global poll_interval is the
+    default for every other polled ERD. Reject duplicate ERDs and warn for any
+    interval below the bus read floor (it cannot be met).
+    """
     if config.get(CONF_GEA2_DISCOVERY) and config[CONF_PROTOCOL] != "gea2":
         raise cv.Invalid("gea2_discovery is only valid with protocol: gea2")
+
+    overrides = config.get(CONF_POLL_OVERRIDES)
+    if overrides:
+        if config[CONF_PROTOCOL] != "gea2":
+            raise cv.Invalid("poll_overrides is only valid with protocol: gea2")
+        seen = set()
+        for ov in overrides:
+            erd = ov[CONF_ERD]
+            if erd in seen:
+                raise cv.Invalid(f"duplicate poll_overrides entry for ERD 0x{erd:04X}")
+            seen.add(erd)
+            if ov[CONF_INTERVAL].total_milliseconds < GEA2_READ_FLOOR_MS:
+                _LOGGER.warning(
+                    "gea: poll_overrides interval for ERD 0x%04X is below the ~%d ms GEA2 "
+                    "read floor; the bus cannot refresh it that fast — the interval will "
+                    "effectively be clamped by bus throughput.",
+                    erd,
+                    GEA2_READ_FLOOR_MS,
+                )
+
+    if (
+        config[CONF_PROTOCOL] == "gea2"
+        and config[CONF_POLL_INTERVAL].total_milliseconds < GEA2_READ_FLOOR_MS
+    ):
+        _LOGGER.warning(
+            "gea: poll_interval is below the ~%d ms GEA2 read floor. As a per-ERD "
+            "default this asks every polled ERD to refresh faster than the bus allows, "
+            "which oversubscribes it. Prefer a slow default and accelerate individual "
+            "ERDs with poll_overrides.",
+            GEA2_READ_FLOOR_MS,
+        )
     return config
 
 
@@ -259,13 +304,25 @@ CONFIG_SCHEMA = cv.All(
             # gea3 (default): full-duplex, 230400 baud, subscribe-all + publications.
             # gea2: half-duplex, 19200 baud, no subscriptions — values are polled.
             cv.Optional(CONF_PROTOCOL, default="gea3"): cv.one_of(*PROTOCOLS, lower=True),
-            # dest_address is optional for GEA3 (auto-detected from first packet) but
-            # required for GEA2 since the appliance never speaks unprompted.
+            # dest_address is optional for both protocols. GEA3: auto-detected
+            # from the first packet. GEA2: if omitted, the bus is probed at boot
+            # to discover the appliance address (see _validate_gea2_options).
             cv.Optional(CONF_DEST_ADDRESS): cv.hex_uint8_t,
             cv.Optional(CONF_SRC_ADDRESS, default=0xBB): cv.hex_uint8_t,
-            # GEA2-only: how long to wait between successive ERD reads in the
-            # round-robin poller. Ignored for GEA3.
+            # GEA2-only: the default refresh interval for each polled ERD.
+            # One read serves every entity bound to that ERD. Ignored for GEA3.
             cv.Optional(CONF_POLL_INTERVAL, default="2s"): cv.positive_time_period_milliseconds,
+            # GEA2-only: per-ERD interval overrides. Polling is per ERD (one read
+            # serves every entity on it), so the cadence belongs to the ERD, not
+            # the entity. ERDs without an override use poll_interval.
+            cv.Optional(CONF_POLL_OVERRIDES): cv.ensure_list(
+                cv.Schema(
+                    {
+                        cv.Required(CONF_ERD): cv.hex_uint16_t,
+                        cv.Required(CONF_INTERVAL): cv.positive_time_period_milliseconds,
+                    }
+                )
+            ),
             # Set to true to embed the GE public ERD lookup table (~75 KB flash).
             # Enables ERD name, type, and decoded value in dump_config output.
             cv.Optional("erd_lookup", default=False): cv.boolean,
@@ -288,7 +345,7 @@ CONFIG_SCHEMA = cv.All(
             ),
         }
     ).extend(uart.UART_DEVICE_SCHEMA),
-    _validate_gea2_requires_dest,
+    _validate_gea2_options,
 )
 
 
@@ -313,6 +370,8 @@ async def to_code(config):
 
     cg.add(var.set_src_address(config[CONF_SRC_ADDRESS]))
     cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
+    for ov in config.get(CONF_POLL_OVERRIDES, []):
+        cg.add(var.add_poll_override(ov[CONF_ERD], ov[CONF_INTERVAL]))
     if config[CONF_GEA2_DISCOVERY]:
         cg.add(var.set_gea2_discovery(True))
 
