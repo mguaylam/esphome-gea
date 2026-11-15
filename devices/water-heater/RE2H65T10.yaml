@@ -31,8 +31,8 @@
 # - The fan runs ~85 s before and ~19 min after each compressor run.
 # - Not verified: anode alarm 0x4081 (4 bytes, 0000FFFF when idle; the flag is assumed to be bit 0x01 of byte 0).
 # - Tank size 0x4041 reads 65. Anode hours 0x404D reads 0.
-# - poll_interval is the gap between each read: 17 ERDs at 500 ms refresh every value about every 8.5 s.
-#   About 5 hours at 500 ms, including a full heat pump cycle, showed no TX collisions and no frame timeouts.
+# - poll_interval is the refresh interval of each ERD: 17 ERDs every 8.5 s keep the bus about 7% busy.
+#   About 5 hours at that rate, including a full heat pump cycle, showed no TX collisions and no frame timeouts.
 # - ERD meanings: geappliances/public-appliance-api-documentation (appliance_api_erd_definitions.json).
 esphome:
   name: bw-water-heater
@@ -86,7 +86,7 @@ gea:
   uart_id: uart_gea
   protocol: gea2
   dest_address: 0x60
-  poll_interval: 500ms      # 17 ERDs -> ~8.5 s per full refresh
+  poll_interval: 8500ms     # each of the 17 ERDs is refreshed every 8.5 s, ~7% bus occupancy
 
 sensor:
   # Temperatures are sent as degrees F x 10; Home Assistant converts to display units.
@@ -264,27 +264,6 @@ sensor:
 
   - platform: gea
     gea_id: gea_hub
-    name: "Mode Raw"
-    id: mode_value
-    icon: mdi:numeric
-    erd: 0x4020
-    decode: uint8
-    entity_category: diagnostic
-    on_value:
-      then:
-        - text_sensor.template.publish:
-            id: mode_text
-            state: !lambda |-
-              switch ((int) x) {
-                case 0: return std::string("Hybrid Standard");
-                case 1: return std::string("Electric (Only)");
-                case 2: return std::string("Heat Pump (Only)");
-                case 3: return std::string("Hybrid Plus");
-                case 4: return std::string("Vacation");
-                default: return std::string("Unknown (") + to_string((int) x) + ")";
-              }
-  - platform: gea
-    gea_id: gea_hub
     name: "Mode Timed Hours Remaining"
     icon: mdi:timer-sand
     erd: 0x4028
@@ -333,11 +312,19 @@ sensor:
     update_interval: 60s
 
 text_sensor:
-  # The mode in the panel's wording, published from Mode Raw above.
-  - platform: template
+  # The mode in the panel's wording. Unknown values are published as 0xNN.
+  - platform: gea
+    gea_id: gea_hub
     name: "Mode"
-    id: mode_text
     icon: mdi:water-boiler-auto
+    erd: 0x4020
+    decode: uint8
+    options:
+      0x00: "Hybrid Standard"
+      0x01: "Electric (Only)"
+      0x02: "Heat Pump (Only)"
+      0x03: "Hybrid Plus"
+      0x04: "Vacation"
 
 binary_sensor:
   - platform: gea
