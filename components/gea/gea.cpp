@@ -222,6 +222,7 @@ void GEAComponent::send_packet_(uint8_t dest, const std::vector<uint8_t> &payloa
     // settles it when it arrives (see settle_gea2_echo_).
     gea2_echo_pending_ = true;
     gea2_echo_frame_abandoned_ = false;
+    gea2_echo_unframed_bytes_ = false;
     gea2_echo_at_ms_ = millis();
     gea2_tx_frames_++;
   }
@@ -661,9 +662,15 @@ void GEAComponent::loop() {
       // an overlap, and another node's traffic restarted the parser before
       // the truncated-frame timeout could see it.
       gea2_collision_("abandoned frame");
+    } else if (gea2_echo_unframed_bytes_) {
+      // Bytes arrived outside any frame in that window and our echo never
+      // followed intact: they were our frame, with its STX destroyed by an
+      // overlap, so the parser never saw it start.
+      gea2_collision_("unframed bytes");
     } else {
-      // Nothing resembling our frame came back: TX did not reach the wire or
-      // RX does not hear it.  Count it (reported with the stats below).
+      // Nothing at all came back that could be our frame: TX did not reach
+      // the wire or RX does not hear it.  Count it (reported with the stats
+      // below).
       gea2_echo_pending_ = false;
       gea2_echo_missing_++;
       ESP_LOGD(TAG, "GEA2 TX echo not seen within %u ms", (unsigned)GEA2_ECHO_TIMEOUT_MS);
@@ -1076,6 +1083,12 @@ void GEAComponent::process_rx_byte_(uint8_t byte) {
         }
       } else if (byte != GEA_ACK) {
         ESP_LOGV(TAG, "RX: unexpected byte 0x%02X while idle", byte);
+        // While our echo is outstanding this may be our own frame arriving
+        // without its STX, destroyed by an overlap.  Remember it; the echo
+        // timeout decides.  (A bare ACK between two other nodes is ordinary
+        // traffic and says nothing about our frame.)
+        if (gea2_echo_pending_)
+          gea2_echo_unframed_bytes_ = true;
       }
       break;
 
