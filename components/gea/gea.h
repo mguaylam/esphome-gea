@@ -164,6 +164,15 @@ struct PendingRequest {
   bool is_discovery{false};
 };
 
+// One entry in the GEA2 poll schedule. Each polled ERD carries its own refresh
+// target (interval_ms) — the per-ERD override if configured, otherwise the
+// hub-wide default — and the timestamp of its last issued read (last_poll_ms).
+struct Gea2PollEntry {
+  uint16_t erd;
+  uint32_t interval_ms;
+  uint32_t last_poll_ms;
+};
+
 // ---------------------------------------------------------------------------
 // GEAComponent — the hub component; owns UART, discovery, and subscription
 // ---------------------------------------------------------------------------
@@ -185,6 +194,9 @@ class GEAComponent : public uart::UARTDevice, public Component {
   void set_src_address(uint8_t addr) { src_addr_ = addr; }
   void set_protocol(Protocol p) { protocol_ = p; }
   void set_poll_interval(uint32_t ms) { poll_interval_ms_ = ms; }
+  // Per-ERD poll interval override (GEA2). ERDs without an override fall back to
+  // the hub-wide poll_interval. See poll_overrides_ / build_poll_list_().
+  void add_poll_override(uint16_t erd, uint32_t interval_ms) { poll_overrides_[erd] = interval_ms; }
   void set_gea2_discovery(bool enabled) { gea2_discovery_ = enabled; }
 
   // ---- Child entity registration ------------------------------------------
@@ -278,7 +290,8 @@ class GEAComponent : public uart::UARTDevice, public Component {
 
   // GEA2 collision avoidance (bus-idle gate) and detection (TX echo check)
   bool gea2_bus_clear_() const;
-  bool consume_gea2_echo_byte_(uint8_t byte);
+  bool settle_gea2_echo_(const std::vector<uint8_t> &pkt);
+  void gea2_collision_(const char *evidence);
 
   // RX state machine
   void process_rx_byte_(uint8_t byte);
@@ -334,17 +347,26 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // for GEA2_TX_IDLE_MS.  One byte at 19200 baud is ~0.52 ms, so 10 ms of
   // silence places us well clear of other nodes' frames and inter-byte gaps.
   static constexpr uint32_t GEA2_TX_IDLE_MS = 10;
-  // Detection: the wire image of our last transmission is kept and matched
-  // byte-for-byte against the bus echo.  If the echo never completes within
-  // this window, assume it never will (TX open / RX mute) and unwedge.
+  // Detection: every transmission comes back on RX as a frame of our own, and
+  // is settled when the parser completes it — verified if it is intact, a
+  // collision if a damaged frame turns up instead (settle_gea2_echo_), or if
+  // a frame is cut short and discarded (RX_FRAME_TIMEOUT_MS, which is shorter
+  // than this window for that reason).  If none of that happens within this
+  // window, assume it never will and unwedge: a collision if the parser
+  // abandoned an unfinished frame meanwhile (gea2_echo_frame_abandoned_),
+  // otherwise a missing echo (TX open / RX mute).
   static constexpr uint32_t GEA2_ECHO_TIMEOUT_MS = 100;
   // A frame that starts (STX) but never terminates (ETX) must not hold the
   // parser out of IDLE indefinitely: that wedges gea2_bus_clear_() and
   // deadlocks the GEA2 poller.  Measured as silence since the last received
-  // byte (last_rx_byte_ms_).  A maximum-length frame is 255 bytes, which is
-  // ~133 ms on the wire at 19200 baud and ~11 ms at 230400, so this window
-  // cannot fire on a legitimately slow frame.
-  static constexpr uint32_t RX_FRAME_TIMEOUT_MS = 400;
+  // byte (last_rx_byte_ms_), checked after RX has been drained.  A frame has
+  // no gaps between its bytes on the wire — GE's reference firmware
+  // (tiny-gea-api) abandons a GEA2 frame after 6 ms of inter-byte silence —
+  // so the only gap seen here is how the UART hands bytes over: with ESPHome's
+  // defaults at most ~10 ms apart on ESP32.  50 ms clears that with margin.
+  // (An ESP32 `rx_full_threshold` raised to its 120-byte maximum hands a
+  // longer GEA2 frame over in 62 ms steps and would trip this.)
+  static constexpr uint32_t RX_FRAME_TIMEOUT_MS = 50;
   // Hard ceiling on the unescaped frame buffer.  LEN is a single byte, so no
   // legitimate frame exceeds 255 bytes; anything larger is line noise.
   static constexpr size_t RX_FRAME_MAX_BYTES = 260;
@@ -352,11 +374,20 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // random backoff (min + [0, span)) instead of the full request timeout.
   static constexpr uint32_t GEA2_COLLISION_BACKOFF_MIN_MS = 2;
   static constexpr uint32_t GEA2_COLLISION_BACKOFF_SPAN_MS = 18;
-  std::vector<uint8_t> gea2_echo_buf_;  // expected echo (exact wire bytes)
-  size_t gea2_echo_idx_{0};             // match cursor into gea2_echo_buf_
-  uint32_t gea2_echo_at_ms_{0};         // when the frame was written (for the timeout)
-  // Runs loop() continuously while a GEA2 exchange is in flight so the echo
-  // matcher, backoff retries and the bus-idle gate react at millisecond
+  bool gea2_echo_pending_{false};  // a transmitted frame has not come back yet
+  // The parser dropped an unfinished frame (restart on STX, or overflow) while
+  // the echo was outstanding.  Not a verdict by itself — our echo may still
+  // follow intact — so it is only read when the echo window expires.
+  bool gea2_echo_frame_abandoned_{false};
+  uint32_t gea2_echo_at_ms_{0};  // when that frame was written (for the timeout)
+  // Echo bookkeeping since boot, for the wiring report in the periodic stats:
+  // frames written to the wire, how many never came back, and how many of
+  // those have already been reported.
+  uint32_t gea2_tx_frames_{0};
+  uint32_t gea2_echo_missing_{0};
+  uint32_t gea2_echo_missing_reported_{0};
+  // Runs loop() continuously while a GEA2 exchange is in flight so echo
+  // settlement, backoff retries and the bus-idle gate react at millisecond
   // resolution instead of the ~16 ms default loop interval.  Released as soon
   // as the bus goes quiet, so the idle polling cadence costs nothing.
   HighFrequencyLoopRequester high_freq_;
@@ -392,14 +423,24 @@ class GEAComponent : public uart::UARTDevice, public Component {
   // User-configured on_erd_change triggers (see gea.on_erd_change in YAML).
   std::vector<ErdChangeTrigger *> erd_change_triggers_;
 
-  // GEA2 round-robin poller: built lazily on first poll from registered
-  // entities and on_erd_change triggers (deduplicated). Empty in GEA3 mode.
-  std::vector<uint16_t> poll_erds_;
-  size_t poll_index_{0};
-  uint32_t last_poll_ms_{0};
+  // GEA2 per-ERD poller: built lazily on first poll from registered entities
+  // and on_erd_change triggers (deduplicated). Each ERD refreshes at its own
+  // interval (override or the hub-wide default); poll_next_() serves the most
+  // overdue due ERD, which is starvation-free. Empty in GEA3 mode.
+  std::vector<Gea2PollEntry> poll_erds_;
+  std::map<uint16_t, uint32_t> poll_overrides_;  // erd -> interval_ms (from YAML)
   bool poll_list_built_{false};
   void build_poll_list_();
+  void add_poll_erd_(uint16_t erd);
   void poll_next_();
+  // Estimated bus time of one GEA2 read-and-response (~30-40 ms at 19200 baud).
+  // Used as the cost basis for the bus-occupancy estimate and the floor below
+  // which a per-ERD interval cannot be met. Keep in sync with GEA2_READ_FLOOR_MS
+  // in __init__.py.
+  static constexpr uint32_t GEA2_POLL_COST_MS = 35;
+  // Bus-busy time accumulated over the current stats window (successful GEA2
+  // read/write round-trips), used to report measured bus occupancy.
+  uint32_t gea2_busy_ms_{0};
 
   // GEA2 active address discovery — engaged when dest_address is omitted in YAML.
   // We broadcast a read of a universal identity ERD; the appliance reveals its

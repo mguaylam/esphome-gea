@@ -1,12 +1,19 @@
-# esphome-gea
+<p align="center">
+  <img src="docs/logo.svg" alt="esphome-gea logo" width="200">
+</p>
 
-[![Validate](https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml)
-[![Test](https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml)
-[![Lint](https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml/badge.svg)](https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml)
-[![ESPHome](https://img.shields.io/badge/ESPHome-external%20component-blue?logo=esphome)](https://esphome.io/components/external_components)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-compatible-41bdf5?logo=home-assistant)](https://www.home-assistant.io/)
-[![ESP32](https://img.shields.io/badge/ESP32-supported-red?logo=espressif)](https://www.espressif.com/)
+<h1 align="center">esphome-gea</h1>
+
+<p align="center">
+  <a href="https://esphome.io/components/external_components"><img src="https://img.shields.io/badge/ESPHome-external%20component-388bfd?style=flat-square&logo=esphome&logoColor=white" alt="ESPHome external component"></a>
+  <a href="https://www.home-assistant.io/"><img src="https://img.shields.io/badge/Home%20Assistant-compatible-388bfd?style=flat-square&logo=home-assistant&logoColor=white" alt="Home Assistant compatible"></a>
+  <a href="https://www.espressif.com/"><img src="https://img.shields.io/badge/ESP32-supported-388bfd?style=flat-square&logo=espressif&logoColor=white" alt="ESP32 supported"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-d29922?style=flat-square" alt="License: MIT"></a>
+  <br>
+  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/mguaylam/esphome-gea/lint.yml?branch=main&label=lint&style=flat-square" alt="lint"></a>
+  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/validate.yml"><img src="https://img.shields.io/github/actions/workflow/status/mguaylam/esphome-gea/validate.yml?branch=main&label=validate&style=flat-square" alt="validate"></a>
+  <a href="https://github.com/mguaylam/esphome-gea/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/mguaylam/esphome-gea/test.yml?branch=main&label=test&style=flat-square" alt="test"></a>
+</p>
 
 An [ESPHome](https://esphome.io/) external component for monitoring and controlling GE appliances — and other appliances supporting the GEA bus — via the **GEA2 or GEA3 serial bus**, with native [Home Assistant](https://www.home-assistant.io/) integration.
 
@@ -114,7 +121,7 @@ UART settings:
 - **Read & write** — sensors, switches, selects, numbers, buttons, text sensors, binary sensors.
 - **Auto-discovery** — every ERD on the bus is logged on boot for easy reverse-engineering (GEA3; GEA2 polls only declared ERDs).
 - **Plug-and-play addressing** — GEA3 appliance bus address auto-detected (GEA2 requires `dest_address`).
-- **Resilient** — periodic re-subscription (GEA3) or round-robin polling (GEA2) recovers state after appliance power cycles.
+- **Resilient** — periodic re-subscription (GEA3) or per-ERD polling (GEA2) recovers state after appliance power cycles.
 - **Flexible decoding** — 13 numeric types, raw hex, ASCII, enum option maps, scaling via `multiplier`/`offset`.
 - **Edge-triggered automations** — `on_erd_change` fires on rising/falling/any bitmask transitions.
 - **Bus health** — diagnostic counters and `is_bus_connected()` lambda for status LEDs.
@@ -152,11 +159,14 @@ Complete configurations for known appliances:
 | File | Appliance | Highlights |
 |------|-----------|------------|
 | [`PDP715SYV0FS.yaml`](devices/dishwasher/PDP715SYV0FS.yaml) | GE PDP715SYV0FS dishwasher | Cycle selection, elapsed time, ASCII cycle name, model retrieval |
+| [`GDT695SBL3TS.yaml`](devices/dishwasher/GDT695SBL3TS.yaml) | GE GDT695SBL3TS dishwasher | GEA2 bus at 0x40, cycle, wash temp, zone, steam, dry, rinse aid, mute and delay controls via bit-level writes to 0x3007, derived cycle progress (full ERD scan documented) |
 | [`PFQ97HSPVDS.yaml`](devices/washer/PFQ97HSPVDS.yaml) | GE PFQ97HSPVDS Ultrafast Combo | Time remaining, door/lock/pump sensors, 200+ cycle options, remote start/stop, dosing |
 | [`RE2H50S10.yaml`](devices/water-heater/RE2H50S10.yaml) | Bradford White AeroTherm heat pump water heater | GEA2 bus, water_heater template with °F↔°C conversion, heat pump / hybrid / vacation modes |
+| [`RE2H65T10.yaml`](devices/water-heater/RE2H65T10.yaml) | Bradford White AeroTherm RE2H65T10 heat pump water heater | GEA2 bus at 0x60, read-only; tank, evaporator and intake temperatures, relay flags checked in the panel's Service Mode (compressor, fan, each element), live power estimate, bus health counters |
 | [`PH65S10BPY.yaml`](devices/water-heater/PH65S10BPY.yaml) | GE Profile GeoSpring PH65S10BPY Smart Hybrid Heat Pump Water Heater | GEA3 bus, hybrid / heat pump / electric / high demand / vacation modes |
 | [`GYE21JYMCFFS.yaml`](devices/refrigerator/GYE21JYMCFFS.yaml) | GE Profile GYE21JYMCFFS French Door refrigerator | GEA2 bus, fridge/freezer setpoints and temperatures, water filter life, ice/water dispense counters, door open timers, last-cycle diagnostics, Sabbath mode |
 | [`GFD48GSSK0WW.yaml`](devices/dryer/GFD48GSSK0WW.yaml) | GE GFD48GSSK0WW gas dryer | GEA2 bus at 0x24 (not 0xC0), state/phase/cycle/time remaining; read-only by design (full ERD scan documented) |
+| [`GTD72EBPN0DG.yaml`](devices/dryer/GTD72EBPN0DG.yaml) | GE GTD72EBPN0DG electric dryer | GEA2 bus at 0x24, mulcmu laundry UART board (inverted UART), state/phase/cycle/dryness/heat/time remaining; read-only (full ERD scan documented) |
 | [`PTD700RSN4SS.yaml`](devices/oven/PTD700RSN4SS.yaml) | GE Profile PTD700RSN4SS double wall oven | GEA2 bus at 0xC0, both cavities, cook mode + setpoint start/cancel, lights, all nine app settings writable |
 
 Got a working config for another appliance? PRs welcome.
@@ -166,3 +176,7 @@ Got a working config for another appliance? PRs welcome.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+**About the logo.** It is a GEA frame. The two amber bars are the `0xE2` and `0xE3` bytes that open and close every frame on the bus, and the three blue cells are payload bytes, here spelling G, E, A.

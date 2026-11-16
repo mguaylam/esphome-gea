@@ -85,7 +85,7 @@ gea:
   uart_id: uart_gea
   protocol: gea2
   dest_address: 0xC0
-  poll_interval: 500ms
+  poll_interval: 16s  # each of the 32 ERDs is refreshed every 16 s
   erd_lookup: true
 
 # ---- shared enums as YAML anchors ----
