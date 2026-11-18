@@ -51,7 +51,9 @@ wifi:
 # Status LEDs
 # ---------------------------------------------------------------------------
 status_led:
-  pin: GPIO2
+  pin:
+    number: GPIO2
+    ignore_strapping_warning: true  # pin fixed by the adapter board
 
 output:
   - platform: gpio

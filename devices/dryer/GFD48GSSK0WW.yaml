@@ -67,7 +67,9 @@ external_components:
 
 # Carrier-board LEDs (XIAO D0/D1/D2): heartbeat, HA link, WiFi — same three GE's firmware drives.
 status_led:
-  pin: GPIO2
+  pin:
+    number: GPIO2
+    ignore_strapping_warning: true  # pin fixed by the adapter board
 
 output:
   - platform: gpio
@@ -79,7 +81,9 @@ output:
 
 uart:
   id: uart_gea
-  tx_pin: GPIO9
+  tx_pin:
+    number: GPIO9
+    ignore_strapping_warning: true  # pin fixed by the adapter board
   rx_pin: GPIO10
   baud_rate: 19200
 

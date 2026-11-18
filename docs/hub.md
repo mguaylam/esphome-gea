@@ -32,7 +32,9 @@ gea:
 # Pin numbers depend on your adapter board — see the UART section below.
 uart:
   id: uart_gea
-  tx_pin: GPIO9   # FirstBuild adapter
+  tx_pin:
+    number: GPIO9   # FirstBuild adapter
+    ignore_strapping_warning: true
   rx_pin: GPIO10
   baud_rate: 19200
 
