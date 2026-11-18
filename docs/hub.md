@@ -32,7 +32,9 @@ gea:
 # Pin numbers depend on your adapter board — see the UART section below.
 uart:
   id: uart_gea
-  tx_pin: GPIO9   # FirstBuild adapter
+  tx_pin:
+    number: GPIO9   # FirstBuild adapter
+    ignore_strapping_warning: true
   rx_pin: GPIO10
   baud_rate: 19200
 
@@ -182,6 +184,23 @@ uart:
 uart:
   id: uart_gea
   tx_pin: GPIO5
+  rx_pin: GPIO10
+  baud_rate: 19200
+```
+
+GPIO9 is a strapping pin on the ESP32-C3, so ESPHome prints
+`WARNING GPIO9 is a strapping pin and should only be used for I/O with care.`
+every time a config that uses it is validated or built. With the FirstBuild
+adapter (or the mulcmu solder-bridge option) this is expected: the pin is fixed
+by the board. To silence it, write the pin in its long form — this only
+suppresses the message and does not change the generated firmware:
+
+```yaml
+uart:
+  id: uart_gea
+  tx_pin:
+    number: GPIO9
+    ignore_strapping_warning: true
   rx_pin: GPIO10
   baud_rate: 19200
 ```

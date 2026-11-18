@@ -67,7 +67,9 @@ external_components:
       path: ../../components
     components: [gea]
 status_led:
-  pin: GPIO2
+  pin:
+    number: GPIO2
+    ignore_strapping_warning: true  # pin fixed by the adapter board
 output:
   - platform: gpio
     pin: GPIO3
@@ -77,7 +79,9 @@ output:
     id: led_wifi
 uart:
   id: uart_gea
-  tx_pin: GPIO9
+  tx_pin:
+    number: GPIO9
+    ignore_strapping_warning: true  # pin fixed by the adapter board
   rx_pin: GPIO10
   baud_rate: 19200
 gea:

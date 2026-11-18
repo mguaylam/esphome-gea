@@ -77,7 +77,9 @@ external_components:
 
 uart:
   id: uart_gea
-  tx_pin: GPIO9
+  tx_pin:
+    number: GPIO9
+    ignore_strapping_warning: true  # pin fixed by the adapter board
   rx_pin: GPIO10
   baud_rate: 19200
 
