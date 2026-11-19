@@ -111,6 +111,7 @@ uart:
   tx_pin: GPIO9
   rx_pin: GPIO10
   baud_rate: 19200
+  rx_full_threshold: 1  # see docs/hub.md, GEA2 on ESP32
 
 gea:
   id: gea_hub

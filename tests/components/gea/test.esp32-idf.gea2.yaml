@@ -14,6 +14,7 @@ uart:
   tx_pin: GPIO17
   rx_pin: GPIO16
   baud_rate: 19200
+  rx_full_threshold: 1
 
 packages:
   common: !include common.gea2.yaml
