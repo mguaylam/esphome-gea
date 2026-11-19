@@ -112,7 +112,10 @@ text_sensor:
 - **TX retries** is normal in small numbers under bus contention.
 - **TX collisions** (GEA2) should stay flat or tick up only occasionally —
   each one is recovered automatically with a fast retry. A steadily climbing
-  counter means heavy bus contention and is worth a field report in
+  counter means heavy bus contention. On ESP32, first check that the `uart:`
+  block sets `rx_full_threshold: 1` (see
+  [GEA2 on ESP32](hub.md#gea2-on-esp32--rx_full_threshold-1)); if it does, the
+  climb is worth a field report in
   [Discussion #3](https://github.com/mguaylam/esphome-gea/discussions/3).
   The counter also appears in the 10 s RX stats log line.
 

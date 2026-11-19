@@ -256,6 +256,9 @@ node's address).
   frame mid-reception, no echo of our own transmission still outstanding,
   and ≥10 ms of line silence (~19 byte-times at 19200 baud). Immediate ACK
   responses are exempt — the peer expects them right after its frame.
+  The gate only sees bytes once the UART hands them over: on ESP32 set
+  `rx_full_threshold: 1` so that happens byte by byte (see
+  [GEA2 on ESP32](hub.md#gea2-on-esp32--rx_full_threshold-1)).
 - **Collision detection, per frame** — the echo is not intercepted ahead of
   the parser. Every received byte goes through the same frame parser, and
   while an echo is outstanding each completed frame settles it:

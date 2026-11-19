@@ -35,6 +35,7 @@ uart:
   tx_pin: GPIO9   # FirstBuild adapter
   rx_pin: GPIO10
   baud_rate: 19200
+  rx_full_threshold: 1   # ESP32 only — see "GEA2 on ESP32" below
 
 gea:
   id: gea_hub
@@ -177,6 +178,7 @@ uart:
   tx_pin: GPIO9
   rx_pin: GPIO10
   baud_rate: 19200
+  rx_full_threshold: 1
 
 # GEA2 — mulcmu adapter (default Tx; see schematic for solder bridge option)
 uart:
@@ -184,7 +186,37 @@ uart:
   tx_pin: GPIO5
   rx_pin: GPIO10
   baud_rate: 19200
+  rx_full_threshold: 1
 ```
+
+### GEA2 on ESP32 — `rx_full_threshold: 1`
+
+On ESP32, set [`rx_full_threshold: 1`](https://esphome.io/components/uart)
+in the `uart:` block of a GEA2 configuration.
+
+By default ESPHome sizes the threshold for about 10 ms of data, which is 18
+bytes at 19200 baud. The UART hands received bytes over when that many have
+accumulated or when the line has been silent for 2 byte-times. While another
+node is transmitting, the component therefore learns about it up to ~10 ms
+late. The hub only transmits after 10 ms of line silence (see
+[Collision handling](protocol.md#collision-handling-gea2)), and with bytes
+arriving that late it can see a quiet line while another node is in the
+middle of a frame, and transmit on top of it. With a threshold of 1, each
+byte is handed over as it arrives, at the cost of one interrupt per received
+byte (at most ~1 900 per second at 19200 baud).
+
+Measured in [#43](https://github.com/mguaylam/esphome-gea/issues/43) on one
+setup (ESP32-C3, FirstBuild adapter, 8 ERDs polled every 500 ms, two runs of
+about 24 h on the same build):
+
+| Per frame sent   | Default (18) | `rx_full_threshold: 1` |
+|------------------|--------------|------------------------|
+| TX collisions    | 16.3 %       | 1.2 %                  |
+| TX retries       | 23.9 %       | 2.1 %                  |
+| Missing echoes   | 4.26 %       | 0.75 %                 |
+
+The option only exists on ESP32; `esphome config` rejects it on other chips.
+GEA3 is point to point and does not need it.
 
 ## GEA2 vs GEA3 — what changes for you?
 
