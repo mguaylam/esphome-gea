@@ -56,7 +56,7 @@ binary_sensor:
 | `get_crc_errors()` | `uint32_t` | a framed packet whose CRC does not match |
 | `get_tx_retries()` | `uint32_t` | a pending request times out and is resent |
 | `get_dropped_requests()` | `uint32_t` | a pending request exhausts all retries |
-| `get_tx_collisions()` | `uint32_t` | a GEA2 bus collision is detected (a damaged frame arrives while the echo of our transmission is outstanding — see [Protocol & internals](protocol.md)) |
+| `get_tx_collisions()` | `uint32_t` | a GEA2 bus collision is detected (a damaged frame, or bytes outside any frame, arrive while the echo of our transmission is outstanding and the echo does not follow — see [Protocol & internals](protocol.md)) |
 | `get_rx_frame_timeouts()` | `uint32_t` | a received frame is discarded because no byte arrived for 50 ms before its ETX (truncated frame; the parser resynchronises) |
 | `is_bus_connected()` | `bool` | `true` when a valid packet has been received in the last 30 s |
 | `get_dest_address()` | `uint8_t` | the appliance address in use (resolved by GEA2 address discovery, or as configured) |
@@ -134,14 +134,15 @@ since the per-frame output is high-volume.
 On the half-duplex GEA2 bus everything the MCU transmits is echoed back on RX
 (see [Protocol & internals](protocol.md)). The echo is decoded as a frame and
 recognised by its source address matching our own: silently when it comes back
-intact (`VERBOSE` confirms it), at `DEBUG` when a damaged frame arrives in its
-place (collision detected, fast retry) or when nothing comes back within
-100 ms. Echoes that never came back are totalled and reported with a `WARN`
-next to the 10 s RX stats, as `N of M frames sent since boot` — a count that
-tracks the frames sent means the wiring does not return the echo at all (see
-the hardware baseline in [Protocol & internals](protocol.md)). The echoed frame
-itself is dropped at `VERBOSE` — it does not count toward bus liveness and is
-not treated as foreign traffic.
+intact (`VERBOSE` confirms it), at `DEBUG` when a damaged frame or bytes
+outside any frame arrive in its place (collision detected, fast retry) or when
+nothing comes back within 100 ms. Echoes that never came back are totalled and
+reported with a `WARN` next to the 10 s RX stats, as `N of M frames sent since
+boot` — a count that tracks the frames sent means the wiring does not return
+the echo at all (see the hardware baseline in
+[Protocol & internals](protocol.md)). The echoed frame itself is dropped at
+`VERBOSE` — it does not count toward bus liveness and is not treated as
+foreign traffic.
 
 ## See also
 

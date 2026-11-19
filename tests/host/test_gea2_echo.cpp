@@ -323,6 +323,41 @@ int main() {
   check(o.answered_ms >= 0 && o.answered_ms < REQUEST_TIMEOUT_MS, "retried before the request timeout");
   check(o.echo_missing_warnings == 0, "not reported as a missing echo");
 
+  // Another node's byte lands on our STX and nothing else: the rest of our
+  // frame is intact on the wire, but the parser never sees a frame start and
+  // reads it as loose bytes.  The appliance does not answer.  The echo window
+  // settles it as a collision, not as a missing echo.
+  o = scenario("collision, STX destroyed", [](Bus &bus, const std::vector<uint8_t> &f, int n) {
+    if (n == 1) {
+      auto g = f;
+      g[0] &= 0x5A;
+      bus.deliver_at(g_now + wire_ms(f.size()), g);
+      return;
+    }
+    appliance_answers(bus, echo_returns(bus, f));
+  });
+  check(o.collisions == 1, "one collision counted");
+  check(o.frames_sent == 2 && o.retries == 1, "one retry");
+  check(o.answered_ms >= 0 && o.answered_ms < REQUEST_TIMEOUT_MS, "retried before the request timeout");
+  check(o.echo_missing_warnings == 0, "not reported as a missing echo");
+
+  // Both nodes start in the same byte time: nothing of our frame survives,
+  // neither its STX nor its ETX.
+  o = scenario("collision, whole frame destroyed", [](Bus &bus, const std::vector<uint8_t> &f, int n) {
+    if (n == 1) {
+      auto g = f;
+      for (auto &b : g)
+        b &= 0x5A;
+      bus.deliver_at(g_now + wire_ms(f.size()), g);
+      return;
+    }
+    appliance_answers(bus, echo_returns(bus, f));
+  });
+  check(o.collisions == 1, "one collision counted");
+  check(o.frames_sent == 2 && o.retries == 1, "one retry");
+  check(o.answered_ms >= 0 && o.answered_ms < REQUEST_TIMEOUT_MS, "retried before the request timeout");
+  check(o.echo_missing_warnings == 0, "not reported as a missing echo");
+
   // RX never hears our own transmission; the appliance answers normally.
   // Unsupported wiring: the reply still decodes, and the echo is reported.
   o = scenario("no echo returned", [](Bus &bus, const std::vector<uint8_t> &f, int) {
