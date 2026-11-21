@@ -43,7 +43,7 @@ class GEATextSensor : public text_sensor::TextSensor, public GEAEntity, public C
       char buf[32];
       // Use integer formatting when the value has no fractional part
       if (val == (float)(int32_t)val) {
-        snprintf(buf, sizeof(buf), "%d", (int32_t)val);
+        snprintf(buf, sizeof(buf), "%d", (int)val);
       } else {
         snprintf(buf, sizeof(buf), "%.2f", val);
       }

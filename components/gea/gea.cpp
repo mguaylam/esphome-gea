@@ -415,7 +415,7 @@ void GEAComponent::setup() {
       dest_addr_ = GEA_BROADCAST_ADDR;
       ESP_LOGI(TAG, "GEA2 mode — dest_address not set; probing the bus to discover the appliance address");
     } else {
-      ESP_LOGI(TAG, "GEA2 mode — values will be polled (default interval=%u ms)", poll_interval_ms_);
+      ESP_LOGI(TAG, "GEA2 mode — values will be polled (default interval=%u ms)", (unsigned)poll_interval_ms_);
 #ifdef GEA_GEA2_DISCOVERY
       if (gea2_discovery_)
         discovery_init_();
@@ -444,11 +444,11 @@ void GEAComponent::dump_config() {
   }
   ESP_LOGCONFIG(TAG, "  Src address:  0x%02X", src_addr_);
   if (protocol_ == Protocol::GEA2) {
-    ESP_LOGCONFIG(TAG, "  Poll interval (default): %u ms", poll_interval_ms_);
+    ESP_LOGCONFIG(TAG, "  Poll interval (default): %u ms", (unsigned)poll_interval_ms_);
     if (!poll_overrides_.empty()) {
       ESP_LOGCONFIG(TAG, "  Poll overrides: %zu", poll_overrides_.size());
       for (auto &kv : poll_overrides_) {
-        ESP_LOGCONFIG(TAG, "    ERD 0x%04X: %u ms", kv.first, kv.second);
+        ESP_LOGCONFIG(TAG, "    ERD 0x%04X: %u ms", kv.first, (unsigned)kv.second);
       }
     }
   }
@@ -550,7 +550,7 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
         uint32_t v = ((uint32_t)data[offset] << 24) | ((uint32_t)data[offset + 1] << 16) |
                      ((uint32_t)data[offset + 2] << 8) | data[offset + 3];
         offset += 4;
-        snprintf(buf, sizeof(buf), "%u", v);
+        snprintf(buf, sizeof(buf), "%u", (unsigned)v);
         result += buf;
       }
     } else if (field == "i32") {
@@ -558,7 +558,7 @@ static std::string decode_erd_value(const std::vector<uint8_t> &data, const char
         int32_t v = (int32_t)(((uint32_t)data[offset] << 24) | ((uint32_t)data[offset + 1] << 16) |
                               ((uint32_t)data[offset + 2] << 8) | data[offset + 3]);
         offset += 4;
-        snprintf(buf, sizeof(buf), "%d", v);
+        snprintf(buf, sizeof(buf), "%d", (int)v);
         result += buf;
       }
     } else if (field == "string") {
@@ -694,8 +694,9 @@ void GEAComponent::loop() {
     uint32_t window = now_stats - last_stats_ms_;
     last_stats_ms_ = now_stats;
     if (protocol_ == Protocol::GEA2) {
-      ESP_LOGD(TAG, "RX stats: %u bytes total, %u TX collisions, %u frame timeouts, bus %s", rx_byte_count_,
-               tx_collisions_, rx_frame_timeouts_, is_bus_connected() ? "CONNECTED" : "no valid packets yet");
+      ESP_LOGD(TAG, "RX stats: %u bytes total, %u TX collisions, %u frame timeouts, bus %s", (unsigned)rx_byte_count_,
+               (unsigned)tx_collisions_, (unsigned)rx_frame_timeouts_,
+               is_bus_connected() ? "CONNECTED" : "no valid packets yet");
       // Echoes that never came back since the last report.  The reference
       // design feeds the bus signal back into RX, so every frame should return;
       // a board where none does cannot detect collisions at all.
@@ -704,7 +705,7 @@ void GEAComponent::loop() {
         ESP_LOGW(TAG,
                  "GEA2 TX echo missing for %u of %u frames sent since boot — check the TX/RX wiring against the "
                  "reference design (docs/protocol.md)",
-                 gea2_echo_missing_, gea2_tx_frames_);
+                 (unsigned)gea2_echo_missing_, (unsigned)gea2_tx_frames_);
       }
       // Measured bus occupancy: fraction of the window spent in our GEA2
       // read/write round-trips. The complement is the real headroom left for
@@ -715,10 +716,10 @@ void GEAComponent::loop() {
         if (occ > 100.0f)
           occ = 100.0f;
         ESP_LOGD(TAG, "GEA2 bus occupancy: ~%.0f%% busy, ~%.0f%% idle (measured over %u ms)", occ, 100.0f - occ,
-                 window);
+                 (unsigned)window);
       }
     } else {
-      ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s", rx_byte_count_,
+      ESP_LOGD(TAG, "RX stats: %u bytes total, bus %s", (unsigned)rx_byte_count_,
                is_bus_connected() ? "CONNECTED" : "no valid packets yet");
     }
     gea2_busy_ms_ = 0;
@@ -1557,7 +1558,7 @@ void GEAComponent::discovery_advance_() {
   if (discovery_index_ % 50 == 0) {
     uint32_t pct = (uint32_t)(discovery_index_ * 100 / GEA2_DISCOVERY_TABLE_SIZE);
     ESP_LOGI(TAG, "Discovery progress: %zu / %zu (%u%%) — %zu ERDs found so far", discovery_index_,
-             GEA2_DISCOVERY_TABLE_SIZE, pct, discovery_found_erds_.size());
+             GEA2_DISCOVERY_TABLE_SIZE, (unsigned)pct, discovery_found_erds_.size());
   }
   if (discovery_index_ % 100 == 0)
     discovery_save_progress_();
