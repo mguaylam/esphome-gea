@@ -6,8 +6,10 @@
   **19200** for GEA2. A baud mismatch produces total silence — no CRC
   errors, no packets, nothing.
 - Confirm the `protocol:` setting matches the appliance. GEA3 is the default
-  and is wrong for older appliances. If `protocol: gea2` is set,
-  `dest_address:` must also be set (the hub can't auto-detect on GEA2).
+  and is wrong for older appliances. With `protocol: gea2` and no
+  `dest_address:`, the hub polls nothing until it has found the appliance
+  address (see
+  [below](#gea2-address-discovery-does-not-settle-on-an-address)).
 - Check TX/RX aren't swapped. The ESP's TX goes to the appliance's RX and
   vice versa.
 - Verify GND is connected between the ESP and the appliance.
@@ -20,12 +22,42 @@
 - The default `poll_interval` is 2 s. With many declared ERDs the full
   refresh cycle takes `N × poll_interval` — give it a full minute before
   assuming an ERD doesn't respond.
-- Make sure `dest_address` actually matches your appliance. GEA3 can
-  auto-detect, but GEA2 cannot — a wrong dest means every read times out
-  silently. `0xC0` is the most common value (washer/dryer/dishwasher main
-  board).
+- Make sure `dest_address` actually matches your appliance — a wrong dest
+  means every read times out silently. The address varies by appliance; if
+  you don't know it, remove `dest_address` and let the hub probe the bus (see
+  the next section).
 - If you have an ERD declared but no entity uses it, it won't be polled —
   the poll list is built from referenced ERDs only.
+
+## GEA2: address discovery does not settle on an address
+
+With `protocol: gea2` and no `dest_address`, the hub broadcasts a read of the
+appliance-type ERD (`0x0008`) and adopts an address only when exactly one node
+returns the value. In every other case it keeps probing and logs what it has
+heard at `WARN`, for example:
+
+```
+GEA2 address discovery: no node answered the probe (ERD 0x0008) after 1 attempt(s). Nodes heard:
+    0x45 — replied to the probe, but has no ERD 0x0008
+    0x41 — did not reply to the probe (last frame: cmd 0x01 to 0xFF)
+  If 0x45 is the control board, set 'dest_address: 0x45' and reflash. Still probing.
+```
+
+The list is repeated in the configuration dump when a log client connects, and
+by `log_address()`. How to read it:
+
+- **answered the probe** — the node returned its appliance type. Two or more
+  such nodes are listed when the hub could not choose between them.
+- **replied to the probe, but has no ERD 0x0008** — the node serves ERDs but
+  not this one. A control board can be in this case; try its address.
+- **did not reply to the probe** — the node was only seen sending other frames,
+  to the hub, to everyone (`0xFF`) or to another node. A control board polling
+  the Wi-Fi module address (`0xBF`) shows up this way.
+- **nothing heard on the bus** — no valid frame at all: check wiring, baud
+  rate and pin inversion first.
+
+Set `dest_address` to the node you picked and reflash. If its ERDs don't
+respond, try the next one in the list.
 
 ## "Subscribe-All Ack" never arrives (GEA3 only)
 

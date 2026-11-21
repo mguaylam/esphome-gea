@@ -19,6 +19,8 @@ jobs:
           /tmp/test_string_decode
           g++ -std=c++17 -Wall -Wextra -Werror -I tests/host/stubs -I components/gea -o /tmp/test_gea2_echo tests/host/test_gea2_echo.cpp components/gea/gea.cpp
           /tmp/test_gea2_echo
+          g++ -std=c++17 -Wall -Wextra -Werror -I tests/host/stubs -I components/gea -o /tmp/test_gea2_addr_discovery tests/host/test_gea2_addr_discovery.cpp components/gea/gea.cpp
+          /tmp/test_gea2_addr_discovery
 
   compile-test:
     name: ${{ matrix.config }}

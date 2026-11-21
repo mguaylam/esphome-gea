@@ -63,16 +63,24 @@ gea:
   differences.
 - **src_address** (*Optional*, hex byte): The address this device claims on the
   GEA bus. Defaults to `0xBB`.
-- **dest_address** (*Optional*, hex byte): The address of the appliance.
+- **dest_address** (*Optional*, hex byte): The address of the appliance's
+  control board.
   - On **GEA3** the hub auto-detects it from the first valid packet.
-  - On **GEA2** there is no spontaneous traffic, so if you omit `dest_address`
-    the hub *actively discovers* it at boot: it broadcasts a read of a universal
-    identity ERD (`0x0001`, model number) and adopts the address of whichever
-    node replies, logging it at `INFO`. If **exactly one** appliance answers it
-    is adopted automatically; if **several** answer (a multi-node bus) the hub
-    halts and asks you to pick one. Pinning `dest_address: 0xC0` explicitly skips
-    this probe on every boot — recommended once you know the value. Typical
-    value: `0xC0`.
+  - On **GEA2** nothing is sent to the hub unprompted, so if you omit
+    `dest_address` the hub probes the bus at boot: it broadcasts a read of the
+    appliance-type ERD (`0x0008`) and looks at who replies.
+    - If **exactly one** node returns the value, its address is adopted, logged
+      at `INFO`, and polling starts.
+    - Otherwise nothing is adopted. The hub logs every node it has heard and
+      what each one did — answered the probe, replied that it has no such ERD,
+      or sent only other traffic — and keeps probing. Pick the control board
+      from that list and set `dest_address`; see
+      [Troubleshooting](troubleshooting.md#gea2-address-discovery-does-not-settle-on-an-address).
+
+    Discovery is meant for the first boot. Once you know the address, pin it
+    with `dest_address` so the probe is skipped. The address varies by
+    appliance: the configurations in [`devices/`](../devices) use `0x24`,
+    `0x40`, `0x60`, `0xC0` and `0xF0`.
 - **poll_interval** (*Optional*, time — GEA2 only): The default refresh interval
   applied to each polled ERD. Defaults to `2s`. Polling is per ERD — one read
   serves every entity bound to that ERD — and each ERD is refreshed on its own
@@ -211,7 +219,7 @@ uart:
 |------------------------|-------------------------------------|---------------------------------------|
 | Discovery              | Subscribes to all ERDs at boot      | Reads only ERDs you declare           |
 | Refresh model          | Appliance pushes on change          | Hub polls each ERD on its own interval |
-| `dest_address`         | Optional (auto-detected)            | Required                              |
+| `dest_address`         | Optional (auto-detected)            | Optional (probed at boot); pin it once known |
 | `poll_interval`        | Ignored                             | Per-ERD default (2 s), tuneable; override per ERD with `poll_overrides` |
 | Bus speed              | 230400 baud                         | 19200 baud                            |
 
