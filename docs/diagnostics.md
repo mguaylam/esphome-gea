@@ -42,6 +42,13 @@ sensor:
     lambda: 'return id(gea_hub).get_tx_collisions();'
     update_interval: 30s
 
+  - platform: template
+    name: "GEA RX Frame Timeouts"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    lambda: 'return id(gea_hub).get_rx_frame_timeouts();'
+    update_interval: 30s
+
 binary_sensor:
   - platform: template
     name: "GEA Bus Connected"

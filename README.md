@@ -73,6 +73,17 @@ Flash, plug into your appliance, and the entities appear in Home Assistant. **Do
 
 > Looking for a complete, working example? See the configs under [`devices/`](devices/).
 
+> The short `github://` source above follows the `main` branch, so every rebuild picks up the latest changes. To stay on a version you have tested, pin a commit instead:
+>
+> ```yaml
+> external_components:
+>   - source:
+>       type: git
+>       url: https://github.com/mguaylam/esphome-gea
+>       ref: <full commit hash>
+>     components: [gea]
+> ```
+
 ---
 
 ## Hardware
